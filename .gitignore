@@ -5,3 +5,10 @@ _build/
 !/subprojects/*.wrap
 .flatpak-builder/
 .cache/clangd/
+/build/
+
+/result
+/result-dev
+.direnv/
+.private/
+gschemas.compiled

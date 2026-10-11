@@ -34,6 +34,14 @@ blueprint_compiler = find_program('blueprint-compiler', version: '>= 0.17')
 config_h.set_quoted('TEST_NM_PYTHON', python.full_path())
 
 application_id = 'org.gnome.Settings'
+if get_option('monge-development')
+  application_id = 'org.monge.Settings.Development'
+endif
+monge_js_dir = get_option('monge-js-dir')
+if monge_js_dir == ''
+  monge_js_dir = join_paths(control_center_datadir, 'monge-settings', 'js')
+endif
+config_h.set_quoted('MONGE_JS_DIR', monge_js_dir)
 
 if get_option('profile') == 'development'
     application_id += '.' + 'Devel'
@@ -218,6 +226,7 @@ pwquality_dep = dependency('pwquality', version: '>= 1.2.2')
 m_dep = cc.find_library('m')
 
 common_deps = [
+  dependency('gjs-1.0'),
   gio_dep,
   glib_dep,
   gsettings_desktop_dep,

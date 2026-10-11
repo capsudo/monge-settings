@@ -10,3 +10,5 @@ option('profile', type: 'combo', choices: ['default','development'], value: 'def
 option('malcontent', type: 'boolean', value: false, description: 'build with malcontent support')
 option('distributor_logo', type: 'string', description: 'absolute path to distributor logo for the About panel')
 option('dark_mode_distributor_logo', type: 'string', description: 'absolute path to distributor logo dark mode variant')
+option('monge-development', type: 'boolean', value: false, description: 'use an isolated Monge Settings development identity')
+option('monge-js-dir', type: 'string', value: '', description: 'path to the Monge Settings JavaScript modules')

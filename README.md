@@ -18,8 +18,9 @@ Note: Monge Settings's version matches the **GNOME Settings** version it is base
 
 - `panels/extensions/vendor/`: retained GNOME Shell helper sources.
 - `tests/extensions/`: automated tests.
-- `scripts/`: helper resource build tool.
-- `build/`: generated helper resources; not committed.
+- `scripts/`: build, launch and isolated test tools.
+- `nix/`: package definition and optional NixOS module; the flake stays at the root.
+- `build/`: generated resources, source snapshots, native build outputs and test captures; not committed.
 
 ## Credits
 
