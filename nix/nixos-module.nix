@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 # optionally replace pkgs.gnome-control-center for consumers of the system package set; importing this module alone changes nothing
 { config, lib, ... }:
 let

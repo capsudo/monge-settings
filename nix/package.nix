@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 # package the local GNOME Settings fork using the upstream dependency, patch and wrapper definitions
 { pkgs, source ? ../., development ? false, upstream ? pkgs.gnome-control-center }:
 let
@@ -75,6 +75,6 @@ upstream.overrideAttrs (old: {
   };
   meta = old.meta // {
     description = "GNOME Settings with integrated extension management${lib.optionalString development " (development identity)"}";
-    license = lib.licenses.gpl2Plus;
+    license = lib.licenses.gpl3Plus;
   };
 })

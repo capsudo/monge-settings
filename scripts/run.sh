@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 # run org.monge.Settings.Development from the checkout, leaving the system Settings launcher untouched
 # Usage: nix develop path:. --command bash scripts/run.sh [--no-build] [panel | application arguments]
 set -euo pipefail

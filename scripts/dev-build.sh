@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 # incrementally build and install into this checkout; nothing is installed into the system
 # Usage: nix develop path:. --command bash scripts/dev-build.sh [-j2 | other ninja arguments]
 set -euo pipefail

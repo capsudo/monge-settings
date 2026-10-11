@@ -196,4 +196,6 @@ Tests with example extensions do not guarantee that every extension works.
 - **GNOME Settings (`gnome-control-center`)** provide the upstream application and native Settings interface on which this fork is based.
 - **[mjakeman's Extension Manager](https://github.com/mjakeman/extension-manager)** heavily inspired the Extensions section, including the Installed/Browse organization and extension-management layout.
 
-Inherited code retains its original copyright and license notices. The upstream GPLv2 license document is preserved in [COPYING](COPYING); the retained helper's license is in `panels/extensions/vendor/COPYING`.
+The combined fork and its original additions are licensed under **GNU GPL version 3 or later (`GPL-3.0-or-later`)**, unless an individual file specifies another license. The unmodified GPLv3 text is in [LICENSE](LICENSE). The original upstream GPLv2 document is preserved in [LICENSES/GPL-2.0-or-later.txt](LICENSES/GPL-2.0-or-later.txt).
+
+Inherited code retains its original copyright and license notices. The retained GNOME Shell helper keeps its own `COPYING` and provenance manifest; separately licensed dependencies and assets retain their own terms. Fork-specific changes are not upstream GNOME bugs.
