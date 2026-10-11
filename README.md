@@ -144,6 +144,7 @@ meson install -C "$MONGE_DEV_BUILD_DIR"
 Adjust `MONGE_SHELL_PREFIX` if GNOME Shell is installed somewhere other than `/usr`. The exported variables must remain set for the following commands:
 
 - Run: `bash scripts/run.sh --no-build extensions`.
+- Test the existing development build: `bash scripts/check.sh --no-build`. The set `MONGE_SHELL_PREFIX` prevents the test script from entering a nix CLI development shell; `--no-build` prevents it from calling the nix-specific build script.
 - After C/Blueprint edits, rerun `meson compile -C "$MONGE_DEV_BUILD_DIR" -j2` and `meson install -C "$MONGE_DEV_BUILD_DIR"` before launching or testing again.
 
 The source directory and generated helper resources must remain available to this local build.
@@ -157,6 +158,7 @@ Requires flakes enabled. The development environment provides the GNOME Shell 49
 
 - Build: `nix develop path:. --command bash scripts/dev-build.sh -j2`
 - Run: `nix develop path:. --command bash scripts/run.sh --no-build extensions`
+- Test: `bash scripts/check.sh` (builds first); use `--no-build` after an existing local build.
 - Build the replacement package without installing it: `nix build path:.#default`
 
 This workflow uses an ignored, writable source snapshot under `build/dev-source/`. Nix-specific path substitutions stay there rather than modifying tracked upstream files. The matching upstream release archive supplies bundled subprojects, including volume control (`gvc`) and the desktop portal helper (`libgxdp`), for both local and packaged nix CLI builds; Git checkouts do not need separate submodule initialization or wrap downloads for this workflow.
