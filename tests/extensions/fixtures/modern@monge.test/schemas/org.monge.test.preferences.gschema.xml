@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.monge.test.preferences" path="/org/monge/test/preferences/">
+    <key name="enabled" type="b">
+      <default>false</default>
+    </key>
+  </schema>
+</schemalist>

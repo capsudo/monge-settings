@@ -17,7 +17,7 @@ Note: Monge Settings's version matches the **GNOME Settings** version it is base
 ## Repository layout
 
 - `panels/extensions/`: runtime JavaScript (`js/`) and retained GNOME Shell helper sources (`vendor/`).
-- `tests/extensions/`: automated tests.
+- `tests/extensions/`: automated tests and extension fixtures.
 - `scripts/`: build, launch and isolated test tools.
 - `nix/`: package definition and optional NixOS module; the flake stays at the root.
 - `build/`: generated resources, source snapshots, native build outputs and test captures; not committed.
