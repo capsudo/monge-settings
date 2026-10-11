@@ -383,6 +383,7 @@ static const gchar * const panel_order[] = {
   "power",
   "multitasking",
   "background",
+  "extensions",
 
   "separator",
 

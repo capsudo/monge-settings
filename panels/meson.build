@@ -9,6 +9,7 @@ panels = [
   'background',
   'color',
   'display',
+  'extensions',
   'mouse',
   'multitasking',
   'notifications',

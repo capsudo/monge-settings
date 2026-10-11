@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Extensions
+Comment=Manage GNOME Shell extensions and their preferences
+Exec=gnome-control-center extensions
+Icon=application-x-addon-symbolic
+Terminal=false
+Type=Application
+NoDisplay=true
+StartupNotify=true
+Categories=GNOME;GTK;Settings;DesktopSettings;X-GNOME-Settings-Panel;X-GNOME-PersonalizationSettings;
+OnlyShowIn=GNOME;
+Keywords=Extensions;Shell;Plugins;Addons;

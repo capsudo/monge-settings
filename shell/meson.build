@@ -64,6 +64,7 @@ common_sources = files(
   'cc-shell.c',
   'cc-panel-list.c',
   'cc-window.c',
+  'cc-monge-bridge.c',
 )
 
 

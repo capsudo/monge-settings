@@ -299,7 +299,7 @@ cc_application_quit (GSimpleAction *simple,
   CcApplication *self = CC_APPLICATION (user_data);
 
   if (self->window)
-    gtk_window_destroy (GTK_WINDOW (self->window));
+    gtk_window_close (GTK_WINDOW (self->window));
 }
 
 

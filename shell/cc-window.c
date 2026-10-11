@@ -41,6 +41,7 @@
 #include "cc-panel-list.h"
 #include "cc-panel-loader.h"
 #include "cc-util.h"
+#include "cc-monge-bridge.h"
 
 #define MOUSE_BACK_BUTTON 8
 
@@ -48,7 +49,7 @@
 
 struct _CcWindow
 {
-  AdwApplicationWindow parent;
+  AdwPreferencesWindow parent;
 
   AdwBreakpoint *break_point;
 
@@ -72,11 +73,20 @@ struct _CcWindow
   GSettings *settings;
 
   CcPanelListView previous_list_view;
+
+  GtkWidget *monge_preferences_content;
+  gboolean monge_emitting_close;
+  gboolean monge_close_accepted;
+  gboolean monge_resuming_panel;
+  char *monge_pending_panel;
+  GVariant *monge_pending_parameters;
+  gboolean monge_pending_history;
+  gboolean monge_pending_force;
 };
 
 static void     cc_shell_iface_init         (CcShellInterface      *iface);
 
-G_DEFINE_TYPE_WITH_CODE (CcWindow, cc_window, ADW_TYPE_APPLICATION_WINDOW,
+G_DEFINE_TYPE_WITH_CODE (CcWindow, cc_window, ADW_TYPE_PREFERENCES_WINDOW,
                          G_IMPLEMENT_INTERFACE (CC_TYPE_SHELL, cc_shell_iface_init))
 
 enum
@@ -85,7 +95,20 @@ enum
   PROP_ACTIVE_PANEL,
   PROP_MODEL,
   PROP_COLLAPSED,
+  PROP_MONGE_PREFERENCES_CONTENT,
+  PROP_MONGE_EMITTING_CLOSE,
+  PROP_MONGE_CLOSE_ACCEPTED,
 };
+
+enum
+{
+  MONGE_REQUEST_PANEL,
+  MONGE_CONTINUE_PANEL,
+  MONGE_BACK,
+  MONGE_PREFERENCES_LOADED,
+  N_MONGE_SIGNALS
+};
+static guint monge_signals[N_MONGE_SIGNALS];
 
 /* Auxiliary methods */
 static void
@@ -314,6 +337,27 @@ set_active_panel_from_id (CcWindow     *self,
       CC_RETURN (TRUE);
     }
 
+  /* wait for native extension cleanup before replacing its panel or selected sidebar row. */
+  if (!self->monge_resuming_panel)
+    {
+      gboolean deferred = FALSE;
+      g_free (self->monge_pending_panel);
+      self->monge_pending_panel = g_strdup (start_id);
+      g_clear_pointer (&self->monge_pending_parameters, g_variant_unref);
+      self->monge_pending_parameters = parameters ? g_variant_ref (parameters) : NULL;
+      self->monge_pending_history = add_to_history;
+      self->monge_pending_force = force_moving_to_the_panel;
+      g_signal_emit (self, monge_signals[MONGE_REQUEST_PANEL], 0, start_id, &deferred);
+      if (deferred)
+        {
+          if (self->current_panel_id)
+            cc_panel_list_set_active_panel (self->panel_list, self->current_panel_id);
+          CC_RETURN (TRUE);
+        }
+      g_clear_pointer (&self->monge_pending_panel, g_free);
+      g_clear_pointer (&self->monge_pending_parameters, g_variant_unref);
+    }
+
   self->old_panel = self->current_panel;
   if (self->old_panel)
     cc_panel_deactivate (CC_PANEL (self->old_panel));
@@ -404,6 +448,11 @@ switch_to_previous_panel (CcWindow *self)
   g_autofree gchar *previous_panel_id = NULL;
 
   CC_ENTRY;
+
+  gboolean handled = FALSE;
+  g_signal_emit (self, monge_signals[MONGE_BACK], 0, &handled);
+  if (handled)
+    CC_RETURN ();
 
   if (g_queue_get_length (self->previous_panels) == 0)
     CC_RETURN ();
@@ -599,6 +648,16 @@ cc_window_get_property (GObject    *object,
       g_value_set_boolean (value, adw_navigation_split_view_get_collapsed (self->split_view));
       break;
 
+    case PROP_MONGE_PREFERENCES_CONTENT:
+      g_value_set_object (value, self->monge_preferences_content);
+      break;
+    case PROP_MONGE_EMITTING_CLOSE:
+      g_value_set_boolean (value, self->monge_emitting_close);
+      break;
+    case PROP_MONGE_CLOSE_ACCEPTED:
+      g_value_set_boolean (value, self->monge_close_accepted);
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
     }
@@ -616,6 +675,12 @@ cc_window_set_property (GObject      *object,
     {
     case PROP_ACTIVE_PANEL:
       set_active_panel (self, g_value_get_object (value));
+      break;
+
+    case PROP_MONGE_EMITTING_CLOSE:
+      self->monge_emitting_close = g_value_get_boolean (value);
+      if (self->monge_emitting_close)
+        self->monge_close_accepted = FALSE;
       break;
 
     case PROP_MODEL:
@@ -674,6 +739,9 @@ cc_window_dispose (GObject *object)
   g_clear_pointer (&self->current_panel_id, g_free);
   g_clear_object (&self->store);
   g_clear_object (&self->active_panel);
+  g_clear_object (&self->monge_preferences_content);
+  g_clear_pointer (&self->monge_pending_panel, g_free);
+  g_clear_pointer (&self->monge_pending_parameters, g_variant_unref);
 
   G_OBJECT_CLASS (cc_window_parent_class)->dispose (object);
 }
@@ -717,6 +785,31 @@ search_entry_key_pressed_cb (CcWindow              *self,
   return FALSE;
 }
 
+static gboolean
+cc_window_close_request (GtkWindow *window)
+{
+  CcWindow *self = CC_WINDOW (window);
+  if (self->monge_emitting_close)
+    {
+      self->monge_close_accepted = TRUE;
+      return FALSE;
+    }
+  return GTK_WINDOW_CLASS (cc_window_parent_class)->close_request (window);
+}
+
+static void
+monge_continue_panel_cb (CcWindow *self)
+{
+  g_autofree char *id = g_steal_pointer (&self->monge_pending_panel);
+  g_autoptr(GVariant) parameters = g_steal_pointer (&self->monge_pending_parameters);
+  if (!id)
+    return;
+  self->monge_resuming_panel = TRUE;
+  set_active_panel_from_id (self, id, parameters, self->monge_pending_history,
+                            self->monge_pending_force, NULL);
+  self->monge_resuming_panel = FALSE;
+}
+
 static void
 cc_window_class_init (CcWindowClass *klass)
 {
@@ -728,6 +821,8 @@ cc_window_class_init (CcWindowClass *klass)
   object_class->constructed = cc_window_constructed;
   object_class->dispose = cc_window_dispose;
   object_class->finalize = cc_window_finalize;
+
+  GTK_WINDOW_CLASS (klass)->close_request = cc_window_close_request;
 
   widget_class->map = cc_window_map;
   widget_class->unmap = cc_window_unmap;
@@ -749,6 +844,26 @@ cc_window_class_init (CcWindowClass *klass)
                                                          "Whether the window is collapsed",
                                                          FALSE,
                                                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+  g_object_class_install_property (object_class, PROP_MONGE_PREFERENCES_CONTENT,
+    g_param_spec_object ("monge-preferences-content", NULL, NULL, GTK_TYPE_WIDGET,
+                         G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property (object_class, PROP_MONGE_EMITTING_CLOSE,
+    g_param_spec_boolean ("monge-emitting-close", NULL, NULL, FALSE,
+                          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property (object_class, PROP_MONGE_CLOSE_ACCEPTED,
+    g_param_spec_boolean ("monge-close-accepted", NULL, NULL, FALSE,
+                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+  monge_signals[MONGE_REQUEST_PANEL] = g_signal_new ("monge-request-panel",
+    G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, g_signal_accumulator_true_handled,
+    NULL, NULL, G_TYPE_BOOLEAN, 1, G_TYPE_STRING);
+  monge_signals[MONGE_CONTINUE_PANEL] = g_signal_new ("monge-continue-panel",
+    G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  monge_signals[MONGE_PREFERENCES_LOADED] = g_signal_new ("monge-preferences-loaded",
+    G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  monge_signals[MONGE_BACK] = g_signal_new ("monge-back",
+    G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, g_signal_accumulator_true_handled,
+    NULL, NULL, G_TYPE_BOOLEAN, 0);
 
   gtk_widget_class_set_template_from_resource (widget_class, "/org/gnome/Settings/gtk/cc-window.ui");
 
@@ -779,7 +894,12 @@ cc_window_class_init (CcWindowClass *klass)
 static void
 cc_window_init (CcWindow *self)
 {
+  /* keep the native preferences widgets owned by this real window while Settings replaces the outer content. */
+  self->monge_preferences_content = g_object_ref (adw_window_get_content (ADW_WINDOW (self)));
+  adw_window_set_content (ADW_WINDOW (self), NULL);
   gtk_widget_init_template (GTK_WIDGET (self));
+  adw_preferences_window_set_search_enabled (ADW_PREFERENCES_WINDOW (self), FALSE);
+  g_signal_connect (self, "monge-continue-panel", G_CALLBACK (monge_continue_panel_cb), NULL);
 
   self->settings = g_settings_new ("org.gnome.Settings");
   self->previous_panels = g_queue_new ();
@@ -798,14 +918,16 @@ cc_window_new (GtkApplication *application,
 {
   g_return_val_if_fail (GTK_IS_APPLICATION (application), NULL);
 
-  return g_object_new (CC_TYPE_WINDOW,
+  CcWindow *window = g_object_new (CC_TYPE_WINDOW,
                        "application", application,
                        "resizable", TRUE,
+                       "modal", FALSE,
                        "title", _("Settings"),
                        "icon-name", DEFAULT_WINDOW_ICON_NAME,
-                       "show-menubar", FALSE,
                        "model", model,
                        NULL);
+  cc_monge_bridge_start (GTK_WINDOW (window));
+  return window;
 }
 
 void
