@@ -1,0 +1,72 @@
+{
+  "project": "GNOME Shell",
+  "version": "49.4",
+  "source": "https://download.gnome.org/sources/gnome-shell/49/gnome-shell-49.4.tar.xz",
+  "archive_sha256": "9d6f0ca2f0140c114f114f6707413611f614fb1ea6c317a8d1fcc40c3c595b08",
+  "files": [
+    {
+      "path": "COPYING",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+    },
+    {
+      "path": "js/dbusServices/extensions/main.js",
+      "sha256": "4a3fc45e141decea198bc685d0d10d3d0d611fb6e3a15d8331927edddf6e3138"
+    },
+    {
+      "path": "js/dbusServices/extensions/extensionsService.js",
+      "sha256": "040537fc934af5fa78fbb2c6ce61bcc34f0d6d78642b500bad475a44b6b875a2"
+    },
+    {
+      "path": "js/dbusServices/extensions/extensionPrefsDialog.js",
+      "sha256": "5caeadb2695ce9be48098079e6012043c25703826b863dfd8c605fd113e93e32"
+    },
+    {
+      "path": "js/dbusServices/dbusService.js",
+      "sha256": "876b18d1c33f6e6a7535076e3abfee14fbc4beef6abdb9156b9e53720a4f6007"
+    },
+    {
+      "path": "js/dbusServices/org.gnome.Shell.Extensions.src.gresource.xml",
+      "sha256": "f8ce728954207a187a84928f582f3d82f95db15a66fc3e73e6b48c11c2e44456"
+    },
+    {
+      "path": "js/extensions/prefs.js",
+      "sha256": "192344a32560a22e92a5622b6391fb66388a5723817fd560295fce6840eef304"
+    },
+    {
+      "path": "js/extensions/sharedInternals.js",
+      "sha256": "98336a4dc41891bcfdd677242c7c1096cefa899a3cd60749a36d4fb88cdf4f71"
+    },
+    {
+      "path": "js/misc/config.js.in",
+      "sha256": "6618a777e3d40018efc2ef002cf27ebae860940d4340dbff21542b66aea337e7"
+    },
+    {
+      "path": "js/misc/errorUtils.js",
+      "sha256": "83ed8211c9f4601fca91d82e4d8733d11c7b7d86c2be9088747423e7d30ea7fa"
+    },
+    {
+      "path": "js/misc/extensionUtils.js",
+      "sha256": "4f8d6be105566a14a3f3b64117c7e6fcfc2ab65411dd37d5bfbc2da819ef97dc"
+    },
+    {
+      "path": "js/misc/dbusErrors.js",
+      "sha256": "ef52aa4217d8144ea188dcf4fa1a80dfebe5a774adefcd254b71fcc11ea12a9a"
+    },
+    {
+      "path": "js/misc/dbusUtils.js",
+      "sha256": "adead2a7e645024a7ae9596f7a946378456dcb56ca1cd8e1751dce2a51bf3f28"
+    },
+    {
+      "path": "js/misc/params.js",
+      "sha256": "a7dae6ae3e7f3d13edc132a0aedf8bbbebcd7e0deadd10397be50901632b6645"
+    },
+    {
+      "path": "js/dbusServices/extensions/ui/extension-error-page.ui",
+      "sha256": "bc3aded5a93eb92a0bb7e1ff31bcb2237dff481a065cb66f48171b79bbda8a53"
+    },
+    {
+      "path": "data/dbus-interfaces/org.gnome.Shell.Extensions.xml",
+      "sha256": "7e7ef28f1dfd702d4f0fa61408572f46b43f23598057ceda07e857dbe04e3040"
+    }
+  ]
+}

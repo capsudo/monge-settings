@@ -1,27 +1,29 @@
-[![Build Status](https://gitlab.gnome.org/GNOME/gnome-control-center/badges/main/pipeline.svg)](https://gitlab.gnome.org/GNOME/gnome-control-center/pipelines)
-[![Coverage report](https://gitlab.gnome.org/GNOME/gnome-control-center/badges/main/coverage.svg)](https://gnome.pages.gitlab.gnome.org/gnome-control-center/)
-[![License](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://gitlab.gnome.org/GNOME/gnome-control-center/blob/main/COPYING)
+# Monge Settings
 
-GNOME Settings
-====================
+A GNOME Settings with extra features and fixes
 
-GNOME Settings is GNOME's main interface for configuration of various aspects of your desktop.
+## Target GNOME Shell Version
 
-If you are looking for usage tips and instructions, you can find it at the [User Documentation](https://help.gnome.org/users/gnome-help/stable/prefs.html) (translated in various languages).
+Monge Settings currently requires the **GNOME Shell 49.4** runtime it was validated against. Porting to another GNOME release requires updating and retesting the retained helper resources and native integration.
 
-## Reporting Issues
+Only selected **GNOME Shell** releases are targeted:
 
-Before reporting any bugs or opening feature requests, [read the communication guidelines](https://gitlab.gnome.org/GNOME/gnome-control-center/blob/main/docs/CODE_OF_CONDUCT.md#communication-guidelines).
+| Monge Settings | Validated against GNOME Shell |
+| --- | --- |
+| [v49.5](../../tree/49.5) | v49.4 |
 
-Report issues to the [GNOME issue tracking system](https://gitlab.gnome.org/GNOME/gnome-control-center/issues).
+Note: Monge Settings's version matches the **GNOME Settings** version it is based on. **GNOME Settings** and **GNOME Shell** are separate components whose versions don't need to match exactly.
 
-## Feature Requests
+## Repository layout
 
-For feature requests or conceptual changes, please start a topic on [GNOME Discourse](https://discourse.gnome.org/tags/settings).
+- `panels/extensions/vendor/`: retained GNOME Shell helper sources.
+- `tests/extensions/`: automated tests.
+- `scripts/`: helper resource build tool.
+- `build/`: generated helper resources; not committed.
 
-## Contributing
+## Credits
 
-See [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) for details on the contribution process, and [`docs/CODING_STYLE.md`](docs/CODING_STYLE.md)
-for the coding style guidelines.
+- **GNOME Settings (`gnome-control-center`)** provide the upstream application and native Settings interface on which this fork is based.
+- **[mjakeman's Extension Manager](https://github.com/mjakeman/extension-manager)** heavily inspired the Extensions section, including the Installed/Browse organization and extension-management layout.
 
-See [docs/](docs/index.md) for our developer documentation.
+Inherited code retains its original copyright and license notices. The upstream GPLv2 license document is preserved in [COPYING](COPYING); the retained helper's license is in `panels/extensions/vendor/COPYING`.
