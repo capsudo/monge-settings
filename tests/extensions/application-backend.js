@@ -7,10 +7,12 @@ export function createCatalog() {
             description: 'Read-only catalog fixture. No extension installation is performed.' },
     ] }), details: async ({ uuid }) => ({ uuid, pk: 123, creator: 'Example Author',
         description: 'Full extension details from the isolated catalog fixture.', downloads: 1234, version: 31,
+        icon: uuid === 'modern@monge.test' ? '/extension-data/icons/example.png' : '/static/images/plugin.png',
         screenshot: '/extension-data/screenshots/example.png',
         website: 'https://extensions.gnome.org/extension/123/example/', homepage: 'https://example.org/' }),
-    media: async () => {
-        const image = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, true, 8, 320, 160);
+    media: async ({ path }) => {
+        const image = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, true, 8,
+            path.includes('/icons/') ? 32 : 320, path.includes('/icons/') ? 32 : 160);
         image.fill(0x7799bbff);
         return image.save_to_bufferv('png', [], [])[1];
     }, comments: async () => [

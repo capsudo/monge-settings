@@ -329,6 +329,8 @@ cc_application_startup (GApplication *application)
   G_APPLICATION_CLASS (cc_application_parent_class)->startup (application);
 
   gtk_window_set_default_icon_name (APPLICATION_ID);
+  gtk_icon_theme_add_resource_path (gtk_icon_theme_get_for_display (gdk_display_get_default ()),
+                                    "/org/gnome/Settings/icons");
 
   gtk_application_set_accels_for_action (GTK_APPLICATION (application),
                                          "app.help", help_accels);

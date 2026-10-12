@@ -2,6 +2,7 @@ import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
+import GdkPixbuf from 'gi://GdkPixbuf';
 import { createFixtureBackend, extension } from './fixtures-backend.js';
 
 Adw.init();
@@ -28,6 +29,65 @@ assert(implementation.query_exists(null), 'Installed view implementation is miss
 const { createInstalledView, createExtensionInfo } = await import('../../panels/extensions/js/installed-view.js');
 const tests = [];
 function test(name, run) { tests.push([name, run]); }
+
+test('extension rows have an Apps-sized presentation icon on the left', async () => {
+    const view = createInstalledView({ backend: createFixtureBackend([extension()]) });
+    try {
+        const row = view.rows.get('example@test');
+        const icon = descendants(row).find(child => child instanceof Gtk.Image && child.icon_name === 'application-x-addon-symbolic');
+        assert(icon?.icon_size === Gtk.IconSize.LARGE && icon.has_css_class('lowres-icon'), 'The prefix matches Apps icon sizing and styling');
+        assert(icon.accessible_role === Gtk.AccessibleRole.PRESENTATION, 'The icon does not duplicate the row label for accessibility');
+    } finally { view.stop(); }
+});
+
+test('extension rows load their custom catalog icons and cache them across refreshes', async () => {
+    const backend = createFixtureBackend([extension()]);
+    const image = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, true, 8, 32, 32); image.fill(0x335577ff);
+    const bytes = image.save_to_bufferv('png', [], [])[1];
+    let calls = 0;
+    const catalog = { details: async ({ uuid }) => {
+        equal(uuid, 'example@test', 'Icon lookup uses the extension UUID'); calls++;
+        return { icon: '/extension-data/icons/example.png' };
+    }, media: async ({ path }) => {
+        equal(path, '/extension-data/icons/example.png', 'Icon fetch uses the catalog media path'); return bytes;
+    } };
+    const iconCache = new Map();
+    const view = createInstalledView({ backend, catalog, iconCache });
+    try {
+        await view.whenIconsReady();
+        const icon = view.rows.get('example@test')._icon;
+        assert(icon.paintable?.get_width() === 32 && icon.pixel_size === 32, 'The real custom image replaces the generic icon at Apps size');
+        await backend.setEnabled('example@test', false); await view.whenIconsReady();
+        equal(calls, 1, 'Changing extension state does not refetch the icon');
+    } finally { view.stop(); }
+    const reopened = createInstalledView({ backend, catalog, iconCache });
+    try { await reopened.whenIconsReady(); equal(calls, 1, 'Reopening the section reuses the decoded icon'); }
+    finally { reopened.stop(); }
+});
+
+test('missing or failed custom icons keep the puzzle fallback', async () => {
+    for (const result of [null, '/static/images/plugin.png', 'failure']) {
+        const view = createInstalledView({ backend: createFixtureBackend([extension()]), catalog: {
+            details: async () => { if (result === 'failure') throw new Error('offline'); return { icon: result }; },
+            media: async () => { throw new Error('A default icon should not be downloaded'); },
+        } });
+        try {
+            await view.whenIconsReady();
+            assert(view.rows.get('example@test')._icon.icon_name === 'application-x-addon-symbolic', 'Missing custom icon retains the fallback');
+        } finally { view.stop(); }
+    }
+});
+
+test('retired icon loads are cancelled and cannot overwrite the fallback', async () => {
+    let finish; let cancellation;
+    const view = createInstalledView({ backend: createFixtureBackend([extension()]), catalog: {
+        details: ({ cancellable }) => { cancellation = cancellable; return new Promise(resolve => { finish = resolve; }); },
+        media: async () => { throw new Error('Retired loads must not fetch media'); },
+    } });
+    const done = view.whenIconsReady(); view.stop(); finish({ icon: '/extension-data/icons/example.png' }); await done;
+    assert(cancellation.is_cancelled() && view.rows.get('example@test')._icon.icon_name === 'application-x-addon-symbolic',
+        'Stopping the view cancels requests and ignores escaped replies');
+});
 
 test('switch and arrow positions match Color Management', async () => {
     const view = createInstalledView({ backend: createFixtureBackend([extension()]) });

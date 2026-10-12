@@ -2,7 +2,7 @@
 Name=Extensions
 Comment=Manage GNOME Shell extensions and their preferences
 Exec=gnome-control-center extensions
-Icon=application-x-addon-symbolic
+Icon=monge-extensions-outline-symbolic
 Terminal=false
 Type=Application
 NoDisplay=true

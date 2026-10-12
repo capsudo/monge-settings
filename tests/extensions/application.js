@@ -36,11 +36,26 @@ export async function run(controller) {
         check(window instanceof Adw.PreferencesWindow, 'real native preferences-window root');
         check(window.get_application().get_application_id() === 'org.monge.Settings.Development', 'isolated development application identity');
         check(controller.current?.panel.get_name() === 'monge-extensions-panel', 'registered Extensions section');
+        const iconTheme = Gtk.IconTheme.get_for_display(window.get_display());
+        for (const name of ['globe-alt2-symbolic', 'monge-extensions-outline-symbolic']) {
+            check(iconTheme.has_icon(name), `bundled extension icon is available: ${name}`);
+            const icon = iconTheme.lookup_icon(name, null, 16, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.FORCE_SYMBOLIC);
+            check(icon.get_file().get_uri().startsWith('resource:///org/gnome/Settings/icons/'), `extension icon is bundled independently of the host theme: ${name}`);
+        }
+        check(controller.current.viewStack.get_page(controller.current.browse.widget).icon_name === 'globe-alt2-symbolic',
+            'Browse uses the requested globe icon');
         check(controller.current.viewStack.get_pages().get_n_items() === 2, 'Installed and Browse tabs');
         check(controller.backend.calls.length === 0 && !window._extension.uuid, 'startup loads no preferences or settings writes');
         check(controller.current.installed.globalSwitch.active, 'global Use Extensions switch');
         check(controller.current.installed.rows.size === 3, 'user and system extension rows');
         const installedRow = controller.current.installed.rows.get('modern@monge.test');
+        await controller.current.installed.whenIconsReady();
+        check(installedRow._icon.paintable?.get_width() === 32 && installedRow._icon.get_width() === 32,
+            'installed extension custom icon is decoded and displayed at Apps size');
+        check(controller.current.installed.rows.get('information@monge.test')._icon.icon_name === 'application-x-addon-symbolic',
+            'extensions without custom artwork retain the puzzle fallback');
+        check(installedRow._icon.icon_size === Gtk.IconSize.LARGE && installedRow._icon.has_css_class('lowres-icon'),
+            'installed extension prefix uses the Apps icon geometry');
         check(installedRow instanceof Adw.ActionRow && !(installedRow instanceof Adw.ExpanderRow), 'installed rows have no down-arrow expander');
         check(installedRow._preferences.get_allocation().x > installedRow._toggle.get_allocation().x,
             'preferences arrow is visually after the switch');

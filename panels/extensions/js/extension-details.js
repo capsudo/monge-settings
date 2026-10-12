@@ -1,13 +1,11 @@
 import Adw from 'gi://Adw?version=1';
-import Gdk from 'gi://Gdk?version=4.0';
-import GdkPixbuf from 'gi://GdkPixbuf';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import { createExtensionInfo } from './installed-view.js';
 import { ensureDetailsStyle } from './extension-details-style.js';
 import { createExtensionReviews } from './extension-reviews.js';
-import { firstGifFrame } from './gif-preview.js';
+import { decodeExtensionImage } from './extension-image.js';
 
 function safeLink(value) {
     if (typeof value !== 'string' || value.length > 2048) return null;
@@ -15,30 +13,6 @@ function safeLink(value) {
         const uri = GLib.Uri.parse(value, GLib.UriFlags.NONE);
         return uri.get_scheme() === 'https' && uri.get_host() && !uri.get_userinfo() ? value : null;
     } catch (_error) { return null; }
-}
-
-function texture(bytes) {
-    if (!bytes?.length || bytes.length > 8 * 1024 * 1024) throw new Error('Invalid preview size');
-    const kind = bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71 ? 'png' :
-        bytes[0] === 255 && bytes[1] === 216 ? 'jpeg' :
-        String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
-        String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP' ? 'webp' :
-        /^GIF8[79]a$/.test(String.fromCharCode(...bytes.slice(0, 6))) ? 'gif' : null;
-    if (!kind) throw new Error('Unsupported preview format');
-    if (kind === 'gif') bytes = firstGifFrame(bytes);
-    const loader = GdkPixbuf.PixbufLoader.new_with_type(kind);
-    let oversized = false;
-    loader.connect('size-prepared', (_loader, width, height) => {
-        oversized = width > 16384 || height > 16384;
-        const scale = Math.min(1, 1200 / Math.max(width, height));
-        loader.set_size(oversized ? 1 : Math.max(1, Math.round(width * scale)),
-            oversized ? 1 : Math.max(1, Math.round(height * scale)));
-    });
-    try { loader.write(bytes); } finally { loader.close(); }
-    if (oversized) throw new Error('Preview dimensions are too large');
-    const pixbuf = kind === 'gif' ? loader.get_animation()?.get_static_image() : loader.get_pixbuf();
-    if (!pixbuf) throw new Error('Preview image could not be decoded');
-    return Gdk.Texture.new_for_pixbuf(pixbuf);
 }
 
 export function createExtensionDetails({ item, catalog }) {
@@ -157,7 +131,7 @@ export function createExtensionDetails({ item, catalog }) {
                 try {
                     const bytes = await catalog.media({ path, cancellable });
                     if (stopped || request !== cancellable) return;
-                    apply(texture(bytes));
+                    apply(decodeExtensionImage(bytes));
                 } catch (_error) {
                     if (!stopped && request === cancellable && path === result.screenshot)
                         status.label = 'The screenshot could not be loaded.';

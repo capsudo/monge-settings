@@ -22,6 +22,7 @@ export class ExtensionsController {
     constructor({ window, backend, catalog, viewState }) {
         this.window = window; this.backend = backend;
         this.catalog = catalog ?? createCatalog({ shellVersion: backend.shellVersion });
+        this.iconCache = new Map();
         let rememberedView = 'preferences';
         this.viewState = viewState ?? { get: () => rememberedView, set: value => { rememberedView = value; } };
         this.current = null; this.closed = false; this.closing = false;
@@ -78,14 +79,14 @@ export class ExtensionsController {
         const navigation = panel.get_child();
         const landing = navigation.get_visible_page();
         const viewStack = new Adw.ViewStack({ vexpand: true });
-        const installed = createInstalledView({ backend: this.backend,
+        const installed = createInstalledView({ backend: this.backend, catalog: this.catalog, iconCache: this.iconCache,
             onPreferences: uuid => this.select(uuid).catch(error => this.report(error)), onError: error => this.report(error) });
         viewStack.add_titled_with_icon(installed.widget, 'installed', 'Installed', 'application-x-addon-symbolic');
         const browse = createBrowseView({ shellVersion: this.backend.shellVersion,
             installedUuids: this.backend.extensions.map(item => item.uuid),
             ...(this.catalog ? { catalog: this.catalog } : {}),
             onDetails: widget => this.showDetails(widget) });
-        viewStack.add_titled_with_icon(browse.widget, 'browse', 'Browse', 'web-browser-symbolic');
+        viewStack.add_titled_with_icon(browse.widget, 'browse', 'Browse', 'globe-alt2-symbolic');
         const header = new Adw.HeaderBar({ title_widget: new Adw.ViewSwitcher({ stack: viewStack, policy: Adw.ViewSwitcherPolicy.WIDE }) });
         const toolbar = new Adw.ToolbarView({ content: viewStack }); toolbar.add_top_bar(header);
         landing.set_child(toolbar);

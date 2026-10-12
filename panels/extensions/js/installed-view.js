@@ -2,6 +2,8 @@
 import Adw from 'gi://Adw?version=1';
 import Gtk from 'gi://Gtk?version=4.0';
 import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+import { decodeExtensionImage } from './extension-image.js';
 
 const stateTitles = new Map([[1, 'Enabled'], [2, 'Disabled'], [3, 'Error'],
     [4, 'Out of Date'], [5, 'Downloading'], [6, 'Initialized'], [99, 'Uninstalled']]);
@@ -42,7 +44,7 @@ export function createExtensionInfo(item) {
     return { widget, update };
 }
 
-export function createInstalledView({ backend, onPreferences = () => {}, onError = () => {} }) {
+export function createInstalledView({ backend, catalog, iconCache = new Map(), onPreferences = () => {}, onError = () => {} }) {
     const widget = new Adw.PreferencesPage();
     const globalGroup = new Adw.PreferencesGroup();
     const globalSwitch = new Adw.SwitchRow({ title: 'Use Extensions',
@@ -59,6 +61,24 @@ export function createInstalledView({ backend, onPreferences = () => {}, onError
     let stopped = false;
     let syncing = false;
     let globalBusy = false;
+    const iconCancellation = new Gio.Cancellable();
+    async function loadIcon(row, uuid) {
+        if (iconCache.has(uuid)) {
+            const image = iconCache.get(uuid);
+            if (image) row._icon.paintable = image;
+            return;
+        }
+        if (!catalog?.details || !catalog?.media) return;
+        try {
+            const details = await catalog.details({ uuid, cancellable: iconCancellation });
+            if (stopped || rows.get(uuid) !== row) return;
+            if (!details.icon || details.icon === '/static/images/plugin.png') { iconCache.set(uuid, null); return; }
+            const bytes = await catalog.media({ path: details.icon, cancellable: iconCancellation });
+            if (stopped || rows.get(uuid) !== row) return;
+            const image = decodeExtensionImage(bytes, 32);
+            iconCache.set(uuid, image); row._icon.paintable = image;
+        } catch (_error) {}
+    }
 
     function syncControls() {
         syncing = true;
@@ -86,6 +106,9 @@ export function createInstalledView({ backend, onPreferences = () => {}, onError
 
     function createRow(item) {
         const row = new Adw.ActionRow({ title: item.name, subtitle: item.uuid, use_markup: false, activatable: true });
+        row._icon = new Gtk.Image({ icon_name: 'application-x-addon-symbolic', icon_size: Gtk.IconSize.LARGE, pixel_size: 32,
+            accessible_role: Gtk.AccessibleRole.PRESENTATION });
+        row._icon.add_css_class('lowres-icon'); row.add_prefix(row._icon);
         row._busy = false;
         row._toggle = new Gtk.Switch({ name: 'installed-enable', active: item.enabled, valign: Gtk.Align.CENTER });
         row._preferences = new Gtk.Image({ icon_name: 'go-next-symbolic',
@@ -128,6 +151,7 @@ export function createInstalledView({ backend, onPreferences = () => {}, onError
             row._group = item.type === 1 ? systemGroup : userGroup;
             row._group.add(row);
             rows.set(item.uuid, row);
+            row._iconPromise ??= loadIcon(row, item.uuid);
         }
         userGroup.description = items.some(item => item.type !== 1) ? '' : 'No user-installed extensions';
         systemGroup.visible = items.some(item => item.type === 1);
@@ -136,9 +160,11 @@ export function createInstalledView({ backend, onPreferences = () => {}, onError
     render();
     const unsubscribe = backend.subscribe(render);
     return { widget, rows, globalSwitch, userGroup, systemGroup,
+        whenIconsReady() { return Promise.all([...rows.values()].map(row => row._iconPromise)); },
         stop() {
             if (stopped) return;
             stopped = true;
+            iconCancellation.cancel();
             unsubscribe();
             globalSwitch.sensitive = false;
             for (const row of rows.values()) {
