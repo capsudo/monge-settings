@@ -45,7 +45,17 @@ server.add_handler('/extension-query/', (_server, message, _path, query) => {
     }
 });
 let redirectHits = 0;
+let commentsResponse = [{ author: { username: '<b>Reviewer</b>' }, rating: 5,
+    comment: '<p>Plain &amp; safe <strong>text</strong></p>', is_extension_creator: false,
+    date: { timestamp: '2026-09-14T13:01:01', standard: 'September 14, 2026' } }];
+server.add_handler('/comments/all/', (_server, message, _path, query) => {
+    requests.push({ ...query });
+    message.set_status(status, null);
+    message.set_response('application/json', Soup.MemoryUse.COPY,
+        new TextEncoder().encode(JSON.stringify(commentsResponse)));
+});
 let detailsResponse = { ...item, downloads: 1234, url: 'https://example.org/',
+    shell_version_map: { '49': { version: 31 }, '50': { version: 99 } },
     icon: '/extension-data/icons/example.png', screenshot: '/extension-data/screenshots/example.png' };
 server.add_handler('/extension-info/', (_server, message, _path, query) => {
     requests.push({ ...query });
@@ -144,8 +154,12 @@ try {
     print('PASS catalog: exact and base Shell versions follow GNOME API compatibility');
     const details = await catalog.details({ uuid: item.uuid });
     assert(details.creator === item.creator && details.downloads === 1234, 'Details include author and downloads');
+    assert(details.version === 31, 'Version is the compatible catalog release, not an incompatible newer release');
     assert(details.screenshot === '/extension-data/screenshots/example.png', 'Details include the GNOME-hosted preview');
     assert(requests.at(-1).uuid === item.uuid, 'Details query matches the exact requested UUID');
+    detailsResponse = { ...detailsResponse, screenshot: '/extension-data/screenshots/example.gif' };
+    assert((await catalog.details({ uuid: item.uuid })).screenshot === detailsResponse.screenshot,
+        'GNOME-hosted GIF screenshots are retained instead of silently discarded');
     detailsResponse = { ...detailsResponse, screenshot: 'https://attacker.test/preview.png', url: 'javascript:alert(1)' };
     const unsafe = await catalog.details({ uuid: item.uuid });
     assert(!unsafe.screenshot && !unsafe.homepage, 'Unsafe details links and media are discarded');
@@ -153,6 +167,18 @@ try {
     await expectFailure(() => catalog.details({ uuid: item.uuid }), 'Invalid extension details');
     await expectFailure(() => catalog.details({ uuid: '' }), 'UUID');
     print('PASS catalog: exact UUID details, rich metadata and restricted media URLs');
+    const comments = await catalog.comments({ pk: 123 });
+    assert(comments.length === 1 && comments[0].text === 'Plain & safe text', 'Review markup is converted to plain text');
+    assert(comments[0].author === '<b>Reviewer</b>' && comments[0].rating === 5, 'Review identity and rating are retained literally');
+    assert(requests.at(-1).pk === '123' && requests.at(-1).all === 'false', 'Initial reviews use the bounded preview endpoint');
+    await catalog.comments({ pk: 123, all: true });
+    assert(requests.at(-1).all === 'true', 'Show All uses the same restricted GNOME endpoint');
+    await expectFailure(() => catalog.comments({ pk: 0 }), 'comments query');
+    commentsResponse = { items: [] };
+    await expectFailure(() => catalog.comments({ pk: 123 }), 'Invalid extension comments');
+    commentsResponse = [null, { author: { username: 'Bad' }, comment: {} }];
+    assert((await catalog.comments({ pk: 123 })).length === 0, 'Malformed comments are skipped');
+    print('PASS catalog: read-only comment previews, Show All, plain text and response validation');
 } finally {
     server.disconnect();
 }

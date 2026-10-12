@@ -105,7 +105,10 @@ export async function run(controller) {
         await delay(50);
         check(!preferences.closed && window._extension.stateObj === preferences && window.visible_page === selectedPage,
             'Details selection retains the loaded extension and its current preferences page');
-        await stable(window); snapshot(window, 'details');
+        await stable(window);
+        check(controller.current.detailsView.preview.get_allocated_height() > 0,
+            'the decoded screenshot occupies visible space instead of collapsing in the scrolling page');
+        snapshot(window, 'details');
         controller.pageLayout.viewStack.visible_child_name = 'preferences';
         check(window.visible_page === selectedPage && window.get_surface() === surface,
             'Preferences selection returns to the same native page and surface');
@@ -115,7 +118,17 @@ export async function run(controller) {
         modern.version = 42;
         await controller.backend.refresh();
 
-        check(controller.current.detailsView.version.subtitle === '42', 'open extension details update from backend events');
+        check(controller.current.detailsView.version.subtitle === '31' &&
+            controller.current.detailsView.installedVersion.label === 'Installed version: 42', 'catalog and installed versions remain distinct on backend updates');
+        const detailsView = controller.current.detailsView;
+        check(detailsView.installed instanceof Gtk.Button && !detailsView.installed.sensitive, 'Installed uses an insensitive button badge');
+        check(detailsView.metrics.orientation === Gtk.Orientation.HORIZONTAL &&
+            detailsView.downloads.has_css_class('property') && detailsView.version.has_css_class('property'),
+            'split statistics emphasize the values');
+        check(detailsView.preview.visible && detailsView.preview.paintable.get_width() === 320,
+            'Details has a decoded extension screenshot');
+        check(detailsView.reviews.cards.length === 2 && detailsView.reviews.cards[0].rating.label === '★★★★★',
+            'Details contains read-only reviews, ratings and dates');
         await stable(window); snapshot(window, 'preferences');
         check(window.get_default_size().join(',') === size, 'preferences preserve Settings geometry');
         check(!window.search_enabled, 'preferences retain the Settings-style header without a search button');

@@ -6,7 +6,7 @@ import Soup from 'gi://Soup?version=3.0';
 
 function mediaPath(value) {
     return typeof value === 'string' && value.length <= 512 &&
-        /^\/(?:extension-data\/(?:icons|screenshots)|static\/images)\/[A-Za-z0-9_-]+\.(?:png|jpe?g|webp)$/i.test(value)
+        /^\/(?:extension-data\/(?:icons|screenshots)|static\/images)\/[A-Za-z0-9_-]+\.(?:png|jpe?g|webp|gif)$/i.test(value)
         ? value : null;
 }
 
@@ -16,6 +16,16 @@ function homepage(value) {
         const uri = GLib.Uri.parse(value, GLib.UriFlags.NONE);
         return uri.get_scheme() === 'https' && uri.get_host() && !uri.get_userinfo() ? value : null;
     } catch (_error) { return null; }
+}
+
+function commentText(value) {
+    const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+    return value.replace(/<br\s*\/?\s*>/gi, '\n').replace(/<\/(?:p|div|li)>/gi, '\n\n')
+        .replace(/<[^>]*>/g, '').replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,8}|amp|lt|gt|quot|apos|nbsp);/gi, (match, name) => {
+            if (name[0] !== '#') return entities[name.toLowerCase()] ?? match;
+            const code = name[1].toLowerCase() === 'x' ? Number.parseInt(name.slice(2), 16) : Number.parseInt(name.slice(1), 10);
+            return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : '';
+        }).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').trim();
 }
 
 export function createCatalog({ shellVersion, endpoint = 'https://extensions.gnome.org/extension-query/',
@@ -139,8 +149,16 @@ export function createCatalog({ shellVersion, endpoint = 'https://extensions.gno
                 typeof data.description !== 'string' || data.description.length > 16384 ||
                 typeof data.creator !== 'string' || data.creator.length > 256)
                 throw new Error('Invalid extension details');
+            const parts = shellVersion.split('.');
+            const compatibleVersions = [shellVersion, parts.slice(0, 2).join('.')];
+            if (Number.parseInt(parts[0], 10) >= 40) compatibleVersions.push(parts[0]);
+            const versions = compatibleVersions.map(key => Object.hasOwn(data.shell_version_map ?? {}, key)
+                ? data.shell_version_map[key]?.version : null)
+                .filter(value => Number.isSafeInteger(value) && value > 0);
             return {
                 uuid, name: data.name, description: data.description, creator: data.creator,
+                pk: Number.isSafeInteger(data.pk) && data.pk > 0 ? data.pk : null,
+                version: versions.length ? Math.max(...versions) : null,
                 downloads: Number.isSafeInteger(data.downloads) && data.downloads >= 0 ? data.downloads : null,
                 homepage: homepage(data.url), icon: mediaPath(data.icon), screenshot: mediaPath(data.screenshot),
                 website: Number.isSafeInteger(data.pk) && data.pk > 0 && typeof data.link === 'string' &&
@@ -151,6 +169,22 @@ export function createCatalog({ shellVersion, endpoint = 'https://extensions.gno
         async media({ path, cancellable = null } = {}) {
             if (!mediaPath(path)) throw new Error('Invalid catalog media path');
             return fetchBytes(`${base.slice(0, -1)}${path}`, cancellable, 8 * 1024 * 1024);
+        },
+        async comments({ pk, all = false, cancellable = null } = {}) {
+            if (!Number.isSafeInteger(pk) || pk < 1 || typeof all !== 'boolean')
+                throw new Error('Invalid extension comments query');
+            const bytes = await fetchBytes(`${base}comments/all/?pk=${pk}&all=${all}`, cancellable);
+            const data = JSON.parse(new TextDecoder().decode(bytes));
+            if (!Array.isArray(data) || data.length > 1000) throw new Error('Invalid extension comments');
+            return data.filter(entry => entry && typeof entry.author?.username === 'string' &&
+                entry.author.username.length <= 256 && typeof entry.comment === 'string' && entry.comment.length <= 16384)
+                .map(entry => ({
+                    author: entry.author.username, text: commentText(entry.comment),
+                    rating: Number.isInteger(entry.rating) && entry.rating >= 1 && entry.rating <= 5 ? entry.rating : null,
+                    creator: entry.is_extension_creator === true,
+                    date: typeof entry.date?.timestamp === 'string' && entry.date.timestamp.length <= 128 ? entry.date.timestamp : null,
+                    dateLabel: typeof entry.date?.standard === 'string' && entry.date.standard.length <= 128 ? entry.date.standard : '',
+                }));
         },
     };
 }

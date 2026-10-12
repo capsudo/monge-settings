@@ -5,6 +5,9 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 import { createExtensionInfo } from './installed-view.js';
+import { ensureDetailsStyle } from './extension-details-style.js';
+import { createExtensionReviews } from './extension-reviews.js';
+import { firstGifFrame } from './gif-preview.js';
 
 function safeLink(value) {
     if (typeof value !== 'string' || value.length > 2048) return null;
@@ -19,8 +22,10 @@ function texture(bytes) {
     const kind = bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71 ? 'png' :
         bytes[0] === 255 && bytes[1] === 216 ? 'jpeg' :
         String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
-        String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP' ? 'webp' : null;
+        String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP' ? 'webp' :
+        /^GIF8[79]a$/.test(String.fromCharCode(...bytes.slice(0, 6))) ? 'gif' : null;
     if (!kind) throw new Error('Unsupported preview format');
+    if (kind === 'gif') bytes = firstGifFrame(bytes);
     const loader = GdkPixbuf.PixbufLoader.new_with_type(kind);
     let oversized = false;
     loader.connect('size-prepared', (_loader, width, height) => {
@@ -31,12 +36,13 @@ function texture(bytes) {
     });
     try { loader.write(bytes); } finally { loader.close(); }
     if (oversized) throw new Error('Preview dimensions are too large');
-    const pixbuf = loader.get_pixbuf();
+    const pixbuf = kind === 'gif' ? loader.get_animation()?.get_static_image() : loader.get_pixbuf();
     if (!pixbuf) throw new Error('Preview image could not be decoded');
     return Gdk.Texture.new_for_pixbuf(pixbuf);
 }
 
 export function createExtensionDetails({ item, catalog }) {
+    ensureDetailsStyle();
     const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 24,
         margin_start: 24, margin_end: 24, margin_top: 32, margin_bottom: 32 });
     const hero = new Gtk.Box({ spacing: 18 });
@@ -47,8 +53,7 @@ export function createExtensionDetails({ item, catalog }) {
     const author = new Gtk.Label({ use_markup: false, xalign: 0, wrap: true, visible: false });
     author.add_css_class('dim-label');
     identity.append(title); identity.append(author);
-    const installed = new Gtk.Label({ label: 'Installed', valign: Gtk.Align.START });
-    installed.add_css_class('dim-label');
+    const installed = new Gtk.Button({ label: 'Installed', sensitive: false, focusable: false, valign: Gtk.Align.CENTER });
     hero.append(icon); hero.append(identity); hero.append(installed); body.append(hero);
     const preview = new Gtk.Picture({ visible: false, can_shrink: true, content_fit: Gtk.ContentFit.CONTAIN });
     body.append(preview);
@@ -57,12 +62,23 @@ export function createExtensionDetails({ item, catalog }) {
     const description = new Gtk.Label({ label: item.description ?? '', use_markup: false, xalign: 0,
         wrap: true, selectable: true });
     body.append(descriptionHeading); body.append(description);
-    const metrics = new Adw.PreferencesGroup();
+    const metrics = new Gtk.Box({ homogeneous: true, overflow: Gtk.Overflow.HIDDEN });
+    metrics.add_css_class('card'); metrics.add_css_class('monge-details-metrics');
     const downloads = new Adw.ActionRow({ title: 'Downloads', visible: false, use_markup: false });
     const version = new Adw.ActionRow({ title: 'Installed Version', use_markup: false });
-    metrics.add(downloads); metrics.add(version); body.append(metrics);
+    const metricLists = [downloads, version].map((row, index) => {
+        row.add_css_class('property');
+        row.add_prefix(new Gtk.Image({ icon_name: index === 0 ? 'folder-download-symbolic' : 'system-software-install-symbolic' }));
+        const list = new Gtk.ListBox({ selection_mode: Gtk.SelectionMode.NONE });
+        list.append(row); metrics.append(list); return list;
+    });
+    body.append(metrics);
+    const installedVersion = new Gtk.Label({ xalign: 0, visible: false });
+    installedVersion.add_css_class('caption'); installedVersion.add_css_class('dim-label');
+    body.append(installedVersion);
     const links = new Adw.PreferencesGroup({ title: 'Links' });
     body.append(links);
+    const reviews = createExtensionReviews({ catalog }); body.append(reviews.widget);
     const information = createExtensionInfo({ ...item, description: '', version: null, url: null });
     body.append(information.widget);
     const status = new Gtk.Label({ xalign: 0, wrap: true }); status.add_css_class('dim-label');
@@ -79,11 +95,14 @@ export function createExtensionDetails({ item, catalog }) {
     function updateLinks() {
         for (const row of linkRows) links.remove(row);
         linkRows.length = 0;
-        for (const [label, uri] of [['Homepage', online?.homepage ?? item.url], ['GNOME Extensions', online?.website]]) {
+        for (const [label, uri, iconName] of [['Homepage', online?.homepage ?? item.url, 'go-home-symbolic'],
+            ['View on Extensions', online?.website, 'web-browser-symbolic']]) {
             const safe = safeLink(uri);
             if (!safe) continue;
             const row = new Adw.ActionRow({ title: label, subtitle: safe, use_markup: false });
+            row.add_prefix(new Gtk.Image({ icon_name: iconName }));
             const button = new Gtk.LinkButton({ uri: safe, icon_name: 'adw-external-link-symbolic', valign: Gtk.Align.CENTER });
+            button.add_css_class('flat'); button.add_css_class('monge-details-link');
             row.add_suffix(button); row.activatable_widget = button; links.add(row); linkRows.push(row);
         }
         links.visible = Boolean(linkRows.length);
@@ -92,8 +111,15 @@ export function createExtensionDetails({ item, catalog }) {
         item = value;
         title.label = item.name;
         description.label = online?.description ?? item.description ?? '';
-        version.subtitle = item.version == null ? '' : String(item.version);
+        const available = Number.isSafeInteger(online?.version) && online.version > 0 ? online.version : null;
+        version.title = available == null ? 'Installed Version' : 'Version';
+        version.subtitle = available != null ? String(available) : item.version == null ? '' : String(item.version);
         version.visible = Boolean(version.subtitle);
+        installedVersion.label = item.version == null ? '' : `Installed version: ${item.version}`;
+        installedVersion.visible = available != null && item.version != null && available !== item.version;
+        metricLists[0].visible = downloads.visible;
+        metricLists[1].visible = version.visible;
+        if (downloads.visible && version.visible) metrics.add_css_class('split'); else metrics.remove_css_class('split');
         information.update({ ...item, description: '', version: null, url: null });
         updateLinks();
     }
@@ -116,8 +142,12 @@ export function createExtensionDetails({ item, catalog }) {
             downloads.visible = Boolean(downloads.subtitle);
             update(item); status.label = '';
             for (const [path, apply] of [[result.icon, value => { icon.paintable = value; }],
-                [result.screenshot, value => { preview.paintable = value; preview.visible = true; }]]) {
-                if (!path || !catalog.media) continue;
+                [result.screenshot, value => {
+                    preview.paintable = value;
+                    preview.height_request = Math.min(420, value.get_height());
+                    preview.visible = true;
+                }]]) {
+                if (!path || !catalog.media || path === '/static/images/plugin.png') continue;
                 try {
                     const bytes = await catalog.media({ path, cancellable });
                     if (stopped || request !== cancellable) return;
@@ -127,16 +157,18 @@ export function createExtensionDetails({ item, catalog }) {
                         status.label = 'The screenshot could not be loaded.';
                 }
             }
+            if (!stopped && request === cancellable) await reviews.load(result.pk);
         } catch (_error) {
             if (!stopped && request === cancellable) {
                 started = false;
                 status.label = 'Additional details could not be loaded. Installed information is still available.';
                 retry.visible = true;
+                reviews.load(null);
             }
         } finally { if (request === cancellable) request = null; }
     }
     retry.connect('clicked', start);
     update(item);
-    return { widget, information, title, author, description, downloads, version, preview, retry,
-        start, update, stop() { stopped = true; request?.cancel(); request = null; } };
+    return { widget, information, title, author, installed, description, metrics, links, reviews, downloads, version, installedVersion, preview, retry,
+        start, update, stop() { stopped = true; request?.cancel(); request = null; reviews.stop(); } };
 }
