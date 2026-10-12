@@ -45,7 +45,7 @@ export async function run(controller) {
         check(installedRow._preferences.get_allocation().x > installedRow._toggle.get_allocation().x,
             'preferences arrow is visually after the switch');
         check(installedRow._preferences instanceof Gtk.Image && installedRow.activatable,
-            'whole installed row activates with Apps-style arrow spacing');
+            'whole installed row is activatable with a presentation-only arrow');
         installedRow._toggle.active = false;
         await delay(20);
         check(!window._extension.uuid && controller.current.navigation.get_visible_page() === controller.current.landing,
@@ -55,6 +55,7 @@ export async function run(controller) {
         installedRow.emit('activated');
         await controller.idle;
         check(window._extension.uuid === 'modern@monge.test', 'row activation opens the extension preferences');
+        check(controller.pageLayout.viewStack.visible_child_name === 'preferences', 'row activation restores Preferences by default');
         check(await controller.back(), 'Back after whole-row activation');
         await stable(window);
         snapshot(window, 'installed');
@@ -79,10 +80,11 @@ export async function run(controller) {
         controller.current.viewStack.visible_child_name = 'installed';
         const surface = window.get_surface(); const size = window.get_default_size().join(',');
         check(await controller.select('information@monge.test'), 'extension without preferences opens information');
-        check(controller.current.informationOnlyPage === window.visible_page && !window._extension.uuid,
+        check(controller.pageLayout.viewStack.visible_child_name === 'details' && !window._extension.uuid,
             'information-only extension loads no preferences code');
         check(window.title === 'Information Only', 'information-only header shows the extension name');
         check(controller.current.information.widget.get_root() === window, 'information-only page uses native Settings root');
+        check(controller.viewState.get() === 'preferences', 'Details-only extensions do not overwrite the remembered Preferences view');
         await stable(window); snapshot(window, 'information');
         check(await controller.back() && !window.visible_page, 'Back removes information-only page');
         check(await controller.select('modern@monge.test'), 'modern native preferences loaded');
@@ -91,18 +93,29 @@ export async function run(controller) {
         check(controller.current.navigation.get_visible_page() === controller.current.preferencesPage, 'preferences are an in-window navigation page');
         check(!window.modal && window.get_surface() === surface, 'no separate modal or replacement surface');
         const information = controller.current.information.widget;
-        check(information.get_root() === window && information.get_parent().get_first_child() === information,
-            'extension information is above its native settings groups');
+        check(information.get_root() === window && information.is_ancestor(controller.pageLayout.details),
+            'extension information belongs to Details, separate from native settings');
+        check(controller.pageLayout.inlineSwitcher instanceof Adw.InlineViewSwitcher &&
+            controller.pageLayout.inlineSwitcher.stack.get_pages().get_n_items() === 3,
+            'Layout, Colors and Profiles use the native inline switcher');
+        controller.pageLayout.inlineSwitcher.stack.visible_child_name = 'colors';
+        const selectedPage = window.visible_page;
+        controller.pageLayout.viewStack.visible_child_name = 'details';
+        await controller.current.detailsView.start();
+        await delay(50);
+        check(!preferences.closed && window._extension.stateObj === preferences && window.visible_page === selectedPage,
+            'Details selection retains the loaded extension and its current preferences page');
+        await stable(window); snapshot(window, 'details');
+        controller.pageLayout.viewStack.visible_child_name = 'preferences';
+        check(window.visible_page === selectedPage && window.get_surface() === surface,
+            'Preferences selection returns to the same native page and surface');
+        check(controller.current.detailsView.author.label === 'By Example Author' &&
+            controller.current.detailsView.downloads.subtitle === '1,234', 'Details shows catalog author and downloads');
         const modern = controller.backend.extensions.find(item => item.uuid === 'modern@monge.test');
         modern.version = 42;
         await controller.backend.refresh();
-        const findLabel = (widget, text) => {
-            if (widget instanceof Gtk.Label && widget.label === text) return true;
-            for (let child = widget.get_first_child(); child; child = child.get_next_sibling())
-                if (findLabel(child, text)) return true;
-            return false;
-        };
-        check(findLabel(information, '42'), 'open extension information updates from backend events');
+
+        check(controller.current.detailsView.version.subtitle === '42', 'open extension details update from backend events');
         await stable(window); snapshot(window, 'preferences');
         check(window.get_default_size().join(',') === size, 'preferences preserve Settings geometry');
         check(!window.search_enabled, 'preferences retain the Settings-style header without a search button');
@@ -117,9 +130,17 @@ export async function run(controller) {
         check(controller.current.navigation.get_visible_page() === controller.current.landing, 'Back restores Installed');
         check(await controller.select('legacy@monge.test'), 'legacy native preferences loaded');
         check(window.visible_page.get_root() === window && window.get_surface() === surface, 'legacy preferences use same actual window');
-        check(controller.current.information.widget.get_parent().get_first_child() === controller.current.information.widget,
-            'legacy preferences also show information above settings');
+        check(controller.current.information.widget.is_ancestor(controller.pageLayout.details) &&
+            !controller.pageLayout.inlineSwitcher.visible, 'legacy details are separate and single-page preferences hide the inline switcher');
         check(await controller.back(), 'legacy Back retirement');
+        check(await controller.select('modern@monge.test'), 'open extension to remember Details');
+        controller.pageLayout.viewStack.visible_child_name = 'details';
+        check(await controller.back() && await controller.select('modern@monge.test'), 'reopen after selecting Details');
+        check(controller.pageLayout.viewStack.visible_child_name === 'details', 'row reopening restores Details when it was last selected');
+        controller.pageLayout.viewStack.visible_child_name = 'preferences';
+        check(await controller.back() && await controller.select('legacy@monge.test'), 'reopen a different extension after selecting Preferences');
+        check(controller.pageLayout.viewStack.visible_child_name === 'preferences', 'row reopening restores Preferences across extensions');
+        check(await controller.back(), 'retire remembered-view fixture');
         check(await controller.select('modern@monge.test'), 'modern round trip');
         const veto = window.connect_after('close-request', () => true);
         check(!await controller.back(), 'Back respects native close veto');

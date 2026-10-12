@@ -4,6 +4,20 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 
+function mediaPath(value) {
+    return typeof value === 'string' && value.length <= 512 &&
+        /^\/(?:extension-data\/(?:icons|screenshots)|static\/images)\/[A-Za-z0-9_-]+\.(?:png|jpe?g|webp)$/i.test(value)
+        ? value : null;
+}
+
+function homepage(value) {
+    if (typeof value !== 'string' || value.length > 2048) return null;
+    try {
+        const uri = GLib.Uri.parse(value, GLib.UriFlags.NONE);
+        return uri.get_scheme() === 'https' && uri.get_host() && !uri.get_userinfo() ? value : null;
+    } catch (_error) { return null; }
+}
+
 export function createCatalog({ shellVersion, endpoint = 'https://extensions.gnome.org/extension-query/',
     timeoutMs = 15000, maxBytes = 1024 * 1024 }) {
     if (typeof shellVersion !== 'string' || !/^\d+(?:\.\d+){0,2}$/.test(shellVersion))
@@ -16,13 +30,8 @@ export function createCatalog({ shellVersion, endpoint = 'https://extensions.gno
         !Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > 1024 * 1024)
         throw new Error('Invalid catalog request bounds');
     const session = new Soup.Session();
-    return {
-        async query({ search = '', page = 1, cancellable = null } = {}) {
-            if (typeof search !== 'string' || search.length > 512 ||
-                !Number.isSafeInteger(page) || page < 1 || page > 100000)
-                throw new Error('Invalid catalog query');
-            const uri = `${endpoint}?shell_version=${encodeURIComponent(shellVersion)}` +
-                `&search=${encodeURIComponent(search)}&page=${page}&sort=popularity&n_per_page=10`;
+    const base = endpoint.replace(/extension-query\/$/, '');
+    async function fetchBytes(uri, cancellable, limit = maxBytes) {
             const message = Soup.Message.new('GET', uri);
             message.set_flags(Soup.MessageFlags.NO_REDIRECT);
             const requestCancellation = new Gio.Cancellable();
@@ -65,7 +74,7 @@ export function createCatalog({ shellVersion, endpoint = 'https://extensions.gno
                     if (!chunk.length)
                         break;
                     length += chunk.length;
-                    if (length > maxBytes)
+                    if (length > limit)
                         throw new Error('Catalog response is too large');
                     chunks.push(chunk);
                 }
@@ -86,6 +95,16 @@ export function createCatalog({ shellVersion, endpoint = 'https://extensions.gno
                 if (cancelledId)
                     cancellable.disconnect(cancelledId);
             }
+            return bytes;
+    }
+    return {
+        async query({ search = '', page = 1, cancellable = null } = {}) {
+            if (typeof search !== 'string' || search.length > 512 ||
+                !Number.isSafeInteger(page) || page < 1 || page > 100000)
+                throw new Error('Invalid catalog query');
+            const uri = `${endpoint}?shell_version=${encodeURIComponent(shellVersion)}` +
+                `&search=${encodeURIComponent(search)}&page=${page}&sort=popularity&n_per_page=10`;
+            const bytes = await fetchBytes(uri, cancellable);
             const data = JSON.parse(new TextDecoder().decode(bytes));
             if (!data || !Array.isArray(data.extensions) || data.extensions.length > 25 ||
                 !Number.isSafeInteger(data.numpages) || data.numpages < 0 || data.numpages > 100000)
@@ -110,6 +129,28 @@ export function createCatalog({ shellVersion, endpoint = 'https://extensions.gno
                             ? `https://extensions.gnome.org${item.link}` : null,
                     })),
             };
+        },
+        async details({ uuid, cancellable = null } = {}) {
+            if (typeof uuid !== 'string' || !uuid.length || uuid.length > 256 || /[\x00-\x1f]/.test(uuid))
+                throw new Error('Invalid extension UUID');
+            const bytes = await fetchBytes(`${base}extension-info/?uuid=${encodeURIComponent(uuid)}`, cancellable);
+            const data = JSON.parse(new TextDecoder().decode(bytes));
+            if (!data || data.uuid !== uuid || typeof data.name !== 'string' || data.name.length > 256 ||
+                typeof data.description !== 'string' || data.description.length > 16384 ||
+                typeof data.creator !== 'string' || data.creator.length > 256)
+                throw new Error('Invalid extension details');
+            return {
+                uuid, name: data.name, description: data.description, creator: data.creator,
+                downloads: Number.isSafeInteger(data.downloads) && data.downloads >= 0 ? data.downloads : null,
+                homepage: homepage(data.url), icon: mediaPath(data.icon), screenshot: mediaPath(data.screenshot),
+                website: Number.isSafeInteger(data.pk) && data.pk > 0 && typeof data.link === 'string' &&
+                    new RegExp(`^/extension/${data.pk}/[a-z0-9-]+/$`).test(data.link)
+                    ? `https://extensions.gnome.org${data.link}` : null,
+            };
+        },
+        async media({ path, cancellable = null } = {}) {
+            if (!mediaPath(path)) throw new Error('Invalid catalog media path');
+            return fetchBytes(`${base.slice(0, -1)}${path}`, cancellable, 8 * 1024 * 1024);
         },
     };
 }

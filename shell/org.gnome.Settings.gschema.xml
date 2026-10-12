@@ -21,4 +21,15 @@
       <description>A tuple containing the initial width, height and maximized state of the app window.</description>
     </key>
   </schema>
+  <schema gettext-domain="gnome-control-center-2.0" id="org.monge.Settings.Extensions">
+    <key name="last-view" type="s">
+      <choices>
+        <choice value="details"/>
+        <choice value="preferences"/>
+      </choices>
+      <default>'preferences'</default>
+      <summary>Last selected extension view</summary>
+      <description>Restore Details or Preferences when opening an installed extension.</description>
+    </key>
+  </schema>
 </schemalist>

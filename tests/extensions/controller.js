@@ -34,16 +34,23 @@ const loop = new GLib.MainLoop(null, false);
                     .map(([key, value]) => [key, new GLib.Variant(typeof value === 'string' ? 's' : typeof value === 'boolean' ? 'b' : 'd', value)]));
             },
         };
-        const controller = new ExtensionsController({ window, backend, catalog: { query: async () => ({ page: 1, pages: 0, items: [] }) } });
+        let rememberedView = 'preferences';
+        const controller = new ExtensionsController({ window, backend,
+            viewState: { get: () => rememberedView, set: value => { rememberedView = value; } },
+            catalog: { query: async () => ({ page: 1, pages: 0, items: [] }) } });
         window.active_panel = createExtensionsPanel(); window.present();
         await controller.ready;
         assert(controller.current.viewStack.get_pages().get_n_items() === 2, 'Installed/Browse tabs in native Settings panel');
         assert(await controller.select('fixture@example'), 'arrow selection opens native preferences');
         assert(window.controllerFixtureRow.get_root() === window, 'native control rooted in Settings');
         const information = controller.current.information?.widget;
-        assert(information instanceof Adw.PreferencesGroup, 'extension information appears in the native preferences page');
+        assert(information instanceof Adw.PreferencesGroup, 'extension information is available on Details');
         assert(information.get_root() === window, 'information retains the actual Settings root');
-        assert(information.get_parent().get_first_child() === information, 'information appears above extension settings');
+        assert(information.is_ancestor(controller.pageLayout.details), 'information belongs to Details rather than native settings');
+        assert(controller.pageLayout.inlineSwitcher instanceof Adw.InlineViewSwitcher, 'native page switching is inline');
+        controller.pageLayout.viewStack.visible_child_name = 'details';
+        assert(counters.closed === 0 && window.controllerFixtureRow.get_root() === window, 'Details retains the loaded preferences session');
+        controller.pageLayout.viewStack.visible_child_name = 'preferences';
         const surface = window.get_surface();
         assert(controller.current.navigation.get_visible_page() === controller.current.preferencesPage, 'navigation subpage, not modal');
         assert(await controller.back(), 'Back accepted');
@@ -51,6 +58,11 @@ const loop = new GLib.MainLoop(null, false);
         assert(window.get_surface() === surface, 'Back keeps same window surface');
         assert(controller.current.navigation.get_visible_page() === controller.current.landing, 'Back restores Installed list');
         assert(await controller.select('fixture@example'), 'round trip');
+        controller.pageLayout.viewStack.visible_child_name = 'details';
+        assert(await controller.back(), 'Back from Details accepts native cleanup');
+        assert(await controller.select('fixture@example'), 'reopen after Details');
+        assert(controller.pageLayout.viewStack.visible_child_name === 'details', 'row reopening restores the last selected view');
+        controller.pageLayout.viewStack.visible_child_name = 'preferences';
         const veto = window.connect_after('close-request', () => true);
         assert(!await controller.back(), 'veto retains preferences');
         assert(controller.current.navigation.get_visible_page() === controller.current.preferencesPage, 'veto retains displayed page');

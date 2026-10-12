@@ -1,0 +1,73 @@
+import Adw from 'gi://Adw?version=1';
+import Gtk from 'gi://Gtk?version=4.0';
+
+function find(widget, type) {
+    if (widget instanceof type) return widget;
+    for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) {
+        const match = find(child, type);
+        if (match) return match;
+    }
+    return null;
+}
+
+export function createExtensionPageLayout(native) {
+    const nativeSwitcher = find(native, Adw.ViewSwitcher);
+    const header = find(native, Adw.HeaderBar);
+    const toolbar = header?.get_ancestor(Adw.ToolbarView.$gtype);
+    if (!nativeSwitcher?.stack || !toolbar)
+        throw new Error('The native preferences layout cannot provide inline page navigation');
+    const originalTitle = header.title_widget;
+    const originalContent = toolbar.content;
+    const nativeBar = find(native, Adw.ViewSwitcherBar);
+    if (nativeBar) nativeBar.visible = false;
+    const viewStack = new Adw.ViewStack({ vexpand: true });
+    const details = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true });
+    const preferences = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true });
+    const heading = new Gtk.Label({ label: 'Preferences', margin_top: 24, margin_bottom: 12 });
+    heading.add_css_class('title-1');
+    const inlineSwitcher = new Adw.InlineViewSwitcher({ stack: nativeSwitcher.stack,
+        display_mode: Adw.InlineViewSwitcherDisplayMode.LABELS, can_shrink: true,
+        halign: Gtk.Align.CENTER, margin_start: 12, margin_end: 12, margin_bottom: 12 });
+    preferences.append(heading);
+    preferences.append(inlineSwitcher);
+    toolbar.content = null;
+    preferences.append(originalContent);
+    viewStack.add_titled_with_icon(details, 'details', 'Details', 'dialog-information-symbolic');
+    viewStack.add_titled_with_icon(preferences, 'preferences', 'Preferences', 'emblem-system-symbolic');
+    toolbar.content = viewStack;
+    const switcher = new Adw.ViewSwitcher({ stack: viewStack, policy: Adw.ViewSwitcherPolicy.WIDE });
+    header.title_widget = switcher;
+    const pages = nativeSwitcher.stack.get_pages();
+    const watched = new Map();
+    const sync = () => {
+        const present = new Set();
+        let visible = 0;
+        for (let index = 0; index < pages.get_n_items(); index++) {
+            const page = pages.get_item(index);
+            present.add(page);
+            if (!watched.has(page)) watched.set(page, page.connect('notify::visible', sync));
+            if (page.visible) visible++;
+        }
+        for (const [page, signal] of watched) {
+            if (!present.has(page)) { page.disconnect(signal); watched.delete(page); }
+        }
+        inlineSwitcher.visible = visible > 1;
+    };
+    const pagesSignal = pages.connect('items-changed', sync);
+    sync();
+    return {
+        header, viewStack, switcher, inlineSwitcher, details, preferences,
+        originalTitle, originalContent,
+        stop() {
+            pages.disconnect(pagesSignal);
+            for (const [page, signal] of watched) page.disconnect(signal);
+            watched.clear();
+        },
+        setHasPreferences(value) {
+            viewStack.get_page(preferences).visible = value;
+            switcher.visible = value;
+            header.title_widget = value ? switcher : originalTitle;
+            if (!value) viewStack.visible_child_name = 'details';
+        },
+    };
+}

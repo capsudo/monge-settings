@@ -3,8 +3,11 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import { resourceBase } from './bootstrap.js';
 import { attachPreferencesHost } from './preferences-host.js';
-import { createInstalledView, createExtensionInfo } from './installed-view.js';
+import { createInstalledView } from './installed-view.js';
 import { createBrowseView } from './browse-view.js';
+import { createExtensionPageLayout } from './extension-page.js';
+import { createExtensionDetails } from './extension-details.js';
+import { createCatalog } from './catalog.js';
 const { extensionManager } = await import(`${resourceBase}/extensionsService.js`);
 const connect = (object, signal, callback) => GObject.Object.prototype.connect.call(object, signal, callback);
 function findHeader(widget) {
@@ -16,12 +19,21 @@ function findHeader(widget) {
 }
 
 export class ExtensionsController {
-    constructor({ window, backend, catalog }) {
-        this.window = window; this.backend = backend; this.catalog = catalog;
+    constructor({ window, backend, catalog, viewState }) {
+        this.window = window; this.backend = backend;
+        this.catalog = catalog ?? createCatalog({ shellVersion: backend.shellVersion });
+        let rememberedView = 'preferences';
+        this.viewState = viewState ?? { get: () => rememberedView, set: value => { rememberedView = value; } };
         this.current = null; this.closed = false; this.closing = false;
         const native = window.monge_preferences_content;
         attachPreferencesHost(window, native);
         this.ready = window.ready;
+        this.pageLayout = createExtensionPageLayout(native);
+        this.pageLayout.viewStack.connect('notify::visible-child-name', () => {
+            const view = this.pageLayout.viewStack.visible_child_name;
+            if (!this._configuringPage && this.current?.informationItem?.hasPrefs) this.viewState.set(view);
+            if (view === 'details') this.current?.detailsView?.start();
+        });
         this.backButton = new Gtk.Button({ icon_name: 'go-previous-symbolic', tooltip_text: 'Back', visible: false });
         this.backButton.add_css_class('flat');
         this.backButton.connect('clicked', () => this.back().catch(error => this.report(error)));
@@ -34,6 +46,7 @@ export class ExtensionsController {
         window.onCloseRequested = () => this.close().catch(error => this.report(error));
         window.onClosed = () => {
             this.closed = true; this.stopPanel(); backend.stop();
+            this.pageLayout.stop();
             this._pending?.resolve(false); this._pending = null;
         };
         connect(window, 'notify::active-panel', () => this.panelChanged());
@@ -84,7 +97,7 @@ export class ExtensionsController {
             const current = this.current;
             if (!current?.informationItem) return;
             const item = this.backend.extensions.find(value => value.uuid === current.informationItem.uuid);
-            if (item) { current.informationItem = item; current.information.update(item); }
+            if (item) { current.informationItem = item; current.detailsView.update(item); }
         });
         viewStack.connect('notify::visible-child-name', () => {
             if (this.current?.viewStack !== viewStack) return;
@@ -134,12 +147,12 @@ export class ExtensionsController {
                     const info = item.hasPrefs ? await this.backend.getExtension(request.uuid) : null;
                     if (request !== this._latest || this.closing) { request.resolve(false); continue; }
                     const extension = info ? extensionManager.createExtensionObject(info) : null;
-                    if (current.informationOnlyPage) this.clearInformation();
                     if (!await this.window.switchTo(extension)) { request.resolve(false); continue; }
                     if (request !== this._latest || this.closing) { request.resolve(false); continue; }
                     this.showPreferences(item); request.resolve(true);
                 } else {
-                    if (request.kind === 'back' && this.window._extension.uuid && this.window.popPreferencesSubpage()) {
+                    if (request.kind === 'back' && this.pageLayout.viewStack.visible_child_name === 'preferences' &&
+                        this.window._extension.uuid && this.window.popPreferencesSubpage()) {
                         request.resolve(true); continue;
                     }
                     if (!await this.window.switchTo(null)) { request.resolve(false); continue; }
@@ -168,18 +181,17 @@ export class ExtensionsController {
         item ??= this.backend.extensions.find(value => value.uuid === this.window._extension.uuid);
         if (!item) return;
         this.clearInformation();
-        if (!item.hasPrefs) {
-            current.informationOnlyPage = new Adw.PreferencesPage({ title: item.name });
-            this.window.add(current.informationOnlyPage);
-            this.window.visible_page = current.informationOnlyPage;
-        }
-        const page = this.window.visible_page;
-        current.information = createExtensionInfo(item);
+        current.detailsView = createExtensionDetails({ item, catalog: this.catalog });
+        this.pageLayout.details.append(current.detailsView.widget);
+        current.information = current.detailsView.information;
         current.informationItem = item;
-        current.informationPage = page;
-        page.add(current.information.widget);
-        const groups = current.information.widget.get_parent();
-        groups.reorder_child_after(current.information.widget, null);
+        const view = item.hasPrefs ? this.viewState.get() : 'details';
+        this._configuringPage = true;
+        try {
+            this.pageLayout.setHasPreferences(item.hasPrefs);
+            this.pageLayout.viewStack.visible_child_name = view;
+        } finally { this._configuringPage = false; }
+        if (this.pageLayout.viewStack.visible_child_name === 'details') current.detailsView.start();
         current.preferencesPage.title = item.name;
         this.window.title = item.name;
         this.backButton.visible = true;
@@ -190,12 +202,11 @@ export class ExtensionsController {
     clearInformation() {
         const current = this.current;
         if (!current) return;
-        if (current.information?.widget.get_parent()) current.informationPage.remove(current.information.widget);
-        if (current.informationOnlyPage) this.window.remove(current.informationOnlyPage);
+        current.detailsView?.stop();
+        if (current.detailsView?.widget.get_parent()) this.pageLayout.details.remove(current.detailsView.widget);
+        current.detailsView = null;
         current.information = null;
         current.informationItem = null;
-        current.informationPage = null;
-        current.informationOnlyPage = null;
     }
 
     stopPanel() {

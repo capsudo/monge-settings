@@ -8,6 +8,7 @@ cleanup() {
 }
 trap cleanup EXIT
 node "$(dirname -- "${BASH_SOURCE[0]}")/prepare-test.mjs" "$scratch"
+glib-compile-schemas "$scratch/schemas"
 Xvfb -displayfd 3 -screen 0 1366x900x24 -nolisten tcp 3>"$scratch/display" >"$scratch/xvfb.log" 2>&1 &
 pid=$!
 for ((i=0; i<100; i++)); do
@@ -21,4 +22,5 @@ export DISPLAY=":$display" GDK_BACKEND=x11 GSETTINGS_BACKEND=memory GIO_USE_VFS=
 export GTK_A11Y=none GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 G_DEBUG=fatal-criticals
 export XDG_RUNTIME_DIR="$scratch/runtime" XDG_CONFIG_HOME="$scratch/config" XDG_CACHE_HOME="$scratch/cache" XDG_STATE_HOME="$scratch/state"
 export MONGE_TEST_SCRATCH="$scratch"
+export GSETTINGS_SCHEMA_DIR="$scratch/schemas"
 timeout 90 dbus-run-session --config-file="$scratch/session.conf" -- bash -c 'export DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"; exec "$@"' bash "$@"

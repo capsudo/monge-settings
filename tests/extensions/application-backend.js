@@ -4,7 +4,9 @@ export function createCatalog() {
     return { query: async () => ({ page: 1, pages: 1, items: [
         { uuid: 'catalog@monge.test', name: 'Catalog Example', creator: 'Example Author',
             description: 'Read-only catalog fixture. No extension installation is performed.' },
-    ] }) };
+    ] }), details: async ({ uuid }) => ({ uuid, creator: 'Example Author',
+        description: 'Full extension details from the isolated catalog fixture.', downloads: 1234,
+        website: 'https://extensions.gnome.org/extension/123/example/', homepage: 'https://example.org/' }) };
 }
 export async function createBackend() {
     const fixtureRoot = Gio.File.new_for_uri(import.meta.url).get_parent().get_child('fixtures').get_path();

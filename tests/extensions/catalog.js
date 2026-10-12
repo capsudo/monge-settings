@@ -45,6 +45,14 @@ server.add_handler('/extension-query/', (_server, message, _path, query) => {
     }
 });
 let redirectHits = 0;
+let detailsResponse = { ...item, downloads: 1234, url: 'https://example.org/',
+    icon: '/extension-data/icons/example.png', screenshot: '/extension-data/screenshots/example.png' };
+server.add_handler('/extension-info/', (_server, message, _path, query) => {
+    requests.push({ ...query });
+    message.set_status(status, null);
+    message.set_response('application/json', Soup.MemoryUse.COPY,
+        new TextEncoder().encode(JSON.stringify(detailsResponse)));
+});
 server.add_handler('/redirected', (_server, message) => {
     redirectHits++;
     message.set_status(200, null);
@@ -134,6 +142,17 @@ try {
         !versions.items.some(entry => entry.uuid === 'future@test'),
     'Both the exact proxy version and its supported base version are compatible, not a different minor release');
     print('PASS catalog: exact and base Shell versions follow GNOME API compatibility');
+    const details = await catalog.details({ uuid: item.uuid });
+    assert(details.creator === item.creator && details.downloads === 1234, 'Details include author and downloads');
+    assert(details.screenshot === '/extension-data/screenshots/example.png', 'Details include the GNOME-hosted preview');
+    assert(requests.at(-1).uuid === item.uuid, 'Details query matches the exact requested UUID');
+    detailsResponse = { ...detailsResponse, screenshot: 'https://attacker.test/preview.png', url: 'javascript:alert(1)' };
+    const unsafe = await catalog.details({ uuid: item.uuid });
+    assert(!unsafe.screenshot && !unsafe.homepage, 'Unsafe details links and media are discarded');
+    detailsResponse = { ...detailsResponse, uuid: 'other@test' };
+    await expectFailure(() => catalog.details({ uuid: item.uuid }), 'Invalid extension details');
+    await expectFailure(() => catalog.details({ uuid: '' }), 'UUID');
+    print('PASS catalog: exact UUID details, rich metadata and restricted media URLs');
 } finally {
     server.disconnect();
 }
