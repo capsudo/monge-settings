@@ -20,6 +20,7 @@ export default class Preferences extends ExtensionPreferences {
         this.closed = false;
         window.connect('close-request', () => {
             this.closed = true;
+            window.destroy();
             return false;
         });
     }

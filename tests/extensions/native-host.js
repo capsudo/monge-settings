@@ -42,7 +42,7 @@ const NativeRoot = GObject.registerClass({
                     const page = new Adw.PreferencesPage({ title: 'Native Fixture' });
                     const group = new Adw.PreferencesGroup();
                     const row = new Adw.SwitchRow({ title: 'Native Switch' }); group.add(row); page.add(group); window.add(page);
-                    window.connect('close-request', () => { window.fixtureClose(); return false; });
+                    window.connect('close-request', () => { window.fixtureClose(); window.destroy(); return false; });
                     window.fixtureRow = row;
                     window.set_default_size(500, 300);
                 }

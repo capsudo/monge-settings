@@ -186,6 +186,11 @@ export class PreferencesHost extends ExtensionPrefsDialog {
             this._requestClose();
     }
 
+    destroy() {
+        if (!this[state]?.emittingClose)
+            super.destroy();
+    }
+
     switchTo(extension) {
         const previous = this[state].operation ?? Promise.resolve();
         const operation = previous.then(() => this._switchTo(extension));
