@@ -118,10 +118,13 @@ export async function run(controller) {
         modern.version = 42;
         await controller.backend.refresh();
 
-        check(controller.current.detailsView.version.subtitle === '31' &&
-            controller.current.detailsView.installedVersion.label === 'Installed version: 42', 'catalog and installed versions remain distinct on backend updates');
+        check(controller.current.detailsView.version.subtitle === 'v31' &&
+            controller.current.detailsView.installedVersion.label === 'v42', 'catalog and installed versions remain distinct on backend updates');
         const detailsView = controller.current.detailsView;
         check(detailsView.installed instanceof Gtk.Button && !detailsView.installed.sensitive, 'Installed uses an insensitive button badge');
+        check(detailsView.installedBadge.has_css_class('linked') && detailsView.installedVersion.is_ancestor(detailsView.installedBadge),
+            'installed version appears next to Installed in a linked header badge');
+        check(detailsView.version.title === 'Latest compatible version', 'catalog version label explicitly describes compatibility');
         check(detailsView.metrics.orientation === Gtk.Orientation.HORIZONTAL &&
             detailsView.downloads.has_css_class('property') && detailsView.version.has_css_class('property'),
             'split statistics emphasize the values');

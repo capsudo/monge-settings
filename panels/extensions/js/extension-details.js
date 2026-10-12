@@ -54,7 +54,12 @@ export function createExtensionDetails({ item, catalog }) {
     author.add_css_class('dim-label');
     identity.append(title); identity.append(author);
     const installed = new Gtk.Button({ label: 'Installed', sensitive: false, focusable: false, valign: Gtk.Align.CENTER });
-    hero.append(icon); hero.append(identity); hero.append(installed); body.append(hero);
+    const installedVersion = new Gtk.Label({ use_markup: false }); installedVersion.add_css_class('heading');
+    const installedVersionButton = new Gtk.Button({ child: installedVersion, sensitive: false, focusable: false });
+    installedVersionButton.add_css_class('monge-installed-version');
+    const installedBadge = new Gtk.Box({ valign: Gtk.Align.CENTER });
+    installedBadge.append(installed); installedBadge.append(installedVersionButton);
+    hero.append(icon); hero.append(identity); hero.append(installedBadge); body.append(hero);
     const preview = new Gtk.Picture({ visible: false, can_shrink: true, content_fit: Gtk.ContentFit.CONTAIN });
     body.append(preview);
     const descriptionHeading = new Gtk.Label({ label: 'Description', xalign: 0 });
@@ -65,7 +70,7 @@ export function createExtensionDetails({ item, catalog }) {
     const metrics = new Gtk.Box({ homogeneous: true, overflow: Gtk.Overflow.HIDDEN });
     metrics.add_css_class('card'); metrics.add_css_class('monge-details-metrics');
     const downloads = new Adw.ActionRow({ title: 'Downloads', visible: false, use_markup: false });
-    const version = new Adw.ActionRow({ title: 'Installed Version', use_markup: false });
+    const version = new Adw.ActionRow({ title: 'Latest compatible version', use_markup: false });
     const metricLists = [downloads, version].map((row, index) => {
         row.add_css_class('property');
         row.add_prefix(new Gtk.Image({ icon_name: index === 0 ? 'folder-download-symbolic' : 'system-software-install-symbolic' }));
@@ -73,9 +78,7 @@ export function createExtensionDetails({ item, catalog }) {
         list.append(row); metrics.append(list); return list;
     });
     body.append(metrics);
-    const installedVersion = new Gtk.Label({ xalign: 0, visible: false });
-    installedVersion.add_css_class('caption'); installedVersion.add_css_class('dim-label');
-    body.append(installedVersion);
+
     const links = new Adw.PreferencesGroup({ title: 'Links' });
     body.append(links);
     const reviews = createExtensionReviews({ catalog }); body.append(reviews.widget);
@@ -112,13 +115,16 @@ export function createExtensionDetails({ item, catalog }) {
         title.label = item.name;
         description.label = online?.description ?? item.description ?? '';
         const available = Number.isSafeInteger(online?.version) && online.version > 0 ? online.version : null;
-        version.title = available == null ? 'Installed Version' : 'Version';
-        version.subtitle = available != null ? String(available) : item.version == null ? '' : String(item.version);
-        version.visible = Boolean(version.subtitle);
-        installedVersion.label = item.version == null ? '' : `Installed version: ${item.version}`;
-        installedVersion.visible = available != null && item.version != null && available !== item.version;
+        version.subtitle = available == null ? '' : `v${available}`;
+        version.visible = available != null;
+        installedVersion.label = item.version == null ? '' : `v${item.version}`;
+        installedVersion.visible = item.version != null;
+        installedVersionButton.visible = installedVersion.visible;
+        installedVersionButton.tooltip_text = item.version == null ? null : `Installed version: ${item.version}`;
+        if (installedVersion.visible) installedBadge.add_css_class('linked'); else installedBadge.remove_css_class('linked');
         metricLists[0].visible = downloads.visible;
         metricLists[1].visible = version.visible;
+        metrics.visible = downloads.visible || version.visible;
         if (downloads.visible && version.visible) metrics.add_css_class('split'); else metrics.remove_css_class('split');
         information.update({ ...item, description: '', version: null, url: null });
         updateLinks();
@@ -169,6 +175,6 @@ export function createExtensionDetails({ item, catalog }) {
     }
     retry.connect('clicked', start);
     update(item);
-    return { widget, information, title, author, installed, description, metrics, links, reviews, downloads, version, installedVersion, preview, retry,
+    return { widget, information, title, author, installed, installedBadge, description, metrics, links, reviews, downloads, version, installedVersion, preview, retry,
         start, update, stop() { stopped = true; request?.cancel(); request = null; reviews.stop(); } };
 }

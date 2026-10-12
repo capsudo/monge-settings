@@ -17,6 +17,8 @@ try {
     assert(view.title.label === item.name && !view.title.use_markup, 'Extension identity is literal');
     assert(view.installed instanceof Gtk.Button && !view.installed.sensitive,
         'Installed is the same insensitive button badge as Extension Manager');
+    assert(view.installedBadge.has_css_class('linked') && view.installedVersion.label === 'v3' &&
+        view.installedVersion.is_ancestor(view.installedBadge), 'Installed version is a linked segment beside Installed before online loading');
     assert(view.metrics instanceof Gtk.Box && view.metrics.orientation === Gtk.Orientation.HORIZONTAL && view.metrics.homogeneous,
         'Downloads and Version share a horizontal split card');
     assert(view.downloads.has_css_class('property') && view.version.has_css_class('property'),
@@ -25,18 +27,24 @@ try {
     assert(view.author.label === 'By <b>Author</b>' && !view.author.use_markup, 'Online author remains literal');
     assert(view.description.label === 'Online description', 'Catalog supplies the full description');
     assert(view.downloads.subtitle === '1,234', 'Downloads are shown when supplied');
-    assert(view.version.subtitle === '31' && view.version.title === 'Version', 'Version matches the compatible catalog release');
-    assert(view.installedVersion.label === 'Installed version: 3', 'The different installed version is still identified explicitly');
+    assert(view.version.subtitle === 'v31' && view.version.title === 'Latest compatible version', 'Latest compatible version names the catalog release explicitly');
+    assert(view.installedVersion.label === 'v3', 'The installed version remains in the header badge');
     await view.start(); assert(calls === 1, 'Returning to Details reuses its loaded content');
     view.update({ ...item, version: 42 });
-    assert(view.version.subtitle === '31' && view.installedVersion.label === 'Installed version: 42',
+    assert(view.version.subtitle === 'v31' && view.installedVersion.label === 'v42',
         'Installed metadata updates independently of catalog content');
+    view.update({ ...item, version: 31 });
+    assert(view.installedVersion.visible && view.installedVersion.label === 'v31', 'Matching installed and compatible versions still show in the header');
+    view.update({ ...item, version: null });
+    assert(!view.installedVersion.visible && !view.installedBadge.has_css_class('linked'), 'Missing installed version leaves an unsplit Installed badge');
 } finally { view.stop(); }
 const offline = createExtensionDetails({ item, catalog: { details: async () => { throw new Error('offline'); } } });
 try {
     await offline.start();
     assert(offline.description.label === item.description, 'Offline details retain local information');
     assert(offline.retry.visible && !offline.downloads.visible, 'Offline mode offers retry without inventing download counts');
+    assert(offline.installedVersion.label === 'v3' && offline.installedVersion.visible && !offline.version.visible,
+        'Offline header retains the installed version without mislabelling it as the latest compatible version');
 } finally { offline.stop(); }
 let finish; let cancelled = false;
 const pending = createExtensionDetails({ item, catalog: { details: ({ cancellable }) => {
