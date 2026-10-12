@@ -3,7 +3,7 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import { resourceBase } from './bootstrap.js';
 import { attachPreferencesHost } from './preferences-host.js';
-import { createInstalledView } from './installed-view.js';
+import { createInstalledView, createExtensionInfo } from './installed-view.js';
 import { createBrowseView } from './browse-view.js';
 const { extensionManager } = await import(`${resourceBase}/extensionsService.js`);
 const connect = (object, signal, callback) => GObject.Object.prototype.connect.call(object, signal, callback);
@@ -80,6 +80,12 @@ export class ExtensionsController {
             child: this.window.monge_preferences_content });
         navigation.add(preferencesPage);
         this.current = { panel, navigation, landing, preferencesPage, viewStack, installed, browse, details: null };
+        this.current.unsubscribeInformation = this.backend.subscribe(() => {
+            const current = this.current;
+            if (!current?.informationItem) return;
+            const item = this.backend.extensions.find(value => value.uuid === current.informationItem.uuid);
+            if (item) { current.informationItem = item; current.information.update(item); }
+        });
         viewStack.connect('notify::visible-child-name', () => {
             if (this.current?.viewStack !== viewStack) return;
             if (viewStack.visible_child_name === 'browse') browse.start(); else browse.stop();
@@ -123,20 +129,22 @@ export class ExtensionsController {
             const current = this.current;
             try {
                 if (request.kind === 'select') {
-                    const info = await this.backend.getExtension(request.uuid);
+                    const item = this.backend.extensions.find(value => value.uuid === request.uuid);
+                    if (!item) throw new Error('This extension is no longer installed');
+                    const info = item.hasPrefs ? await this.backend.getExtension(request.uuid) : null;
                     if (request !== this._latest || this.closing) { request.resolve(false); continue; }
-                    const extension = extensionManager.createExtensionObject(info);
-                    if (!extension.hasPrefs) throw new Error('This extension has no preferences');
-                    current.preferencesPage.set_title(extension.metadata.name);
+                    const extension = info ? extensionManager.createExtensionObject(info) : null;
+                    if (current.informationOnlyPage) this.clearInformation();
                     if (!await this.window.switchTo(extension)) { request.resolve(false); continue; }
                     if (request !== this._latest || this.closing) { request.resolve(false); continue; }
-                    this.showPreferences(); request.resolve(true);
+                    this.showPreferences(item); request.resolve(true);
                 } else {
                     if (request.kind === 'back' && this.window._extension.uuid && this.window.popPreferencesSubpage()) {
                         request.resolve(true); continue;
                     }
                     if (!await this.window.switchTo(null)) { request.resolve(false); continue; }
                     if (request !== this._latest || this.closing) { request.resolve(false); continue; }
+                    this.clearInformation();
                     this.window.title = 'Settings'; this.backButton.visible = false;
                     if (request.kind === 'section') {
                         this.stopPanel(); this.window.emit('monge-continue-panel');
@@ -154,17 +162,46 @@ export class ExtensionsController {
         }
     }
 
-    showPreferences() {
+    showPreferences(item = null) {
         const current = this.current;
         if (!current) return;
-        current.preferencesPage.title = this.window._extension.metadata.name;
+        item ??= this.backend.extensions.find(value => value.uuid === this.window._extension.uuid);
+        if (!item) return;
+        this.clearInformation();
+        if (!item.hasPrefs) {
+            current.informationOnlyPage = new Adw.PreferencesPage({ title: item.name });
+            this.window.add(current.informationOnlyPage);
+            this.window.visible_page = current.informationOnlyPage;
+        }
+        const page = this.window.visible_page;
+        current.information = createExtensionInfo(item);
+        current.informationItem = item;
+        current.informationPage = page;
+        page.add(current.information.widget);
+        const groups = current.information.widget.get_parent();
+        groups.reorder_child_after(current.information.widget, null);
+        current.preferencesPage.title = item.name;
+        this.window.title = item.name;
         this.backButton.visible = true;
         if (current.navigation.get_visible_page() !== current.preferencesPage)
             current.navigation.push(current.preferencesPage);
     }
 
+    clearInformation() {
+        const current = this.current;
+        if (!current) return;
+        if (current.information?.widget.get_parent()) current.informationPage.remove(current.information.widget);
+        if (current.informationOnlyPage) this.window.remove(current.informationOnlyPage);
+        current.information = null;
+        current.informationItem = null;
+        current.informationPage = null;
+        current.informationOnlyPage = null;
+    }
+
     stopPanel() {
         if (!this.current) return;
+        this.current.unsubscribeInformation();
+        this.clearInformation();
         this.current.installed.stop(); this.current.browse.stop();
         this.current.preferencesPage.set_child(null);
         this.backButton.visible = false;

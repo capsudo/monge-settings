@@ -14,7 +14,7 @@ function descendants(widget) {
         result.push(...descendants(child));
     return result;
 }
-function groupRows(group) { return descendants(group).filter(child => child instanceof Adw.ExpanderRow); }
+function groupRows(group) { return descendants(group).filter(child => child instanceof Adw.ActionRow); }
 function equal(actual, expected, message) {
     assert(JSON.stringify(actual) === JSON.stringify(expected), `${message}: ${JSON.stringify(actual)}`);
 }
@@ -25,9 +25,78 @@ async function tick() {
 }
 const implementation = Gio.File.new_for_uri(import.meta.url).get_parent().get_parent().get_parent().get_child('panels/extensions/js/installed-view.js');
 assert(implementation.query_exists(null), 'Installed view implementation is missing');
-const { createInstalledView } = await import('../../panels/extensions/js/installed-view.js');
+const { createInstalledView, createExtensionInfo } = await import('../../panels/extensions/js/installed-view.js');
 const tests = [];
 function test(name, run) { tests.push([name, run]); }
+
+test('switch and arrow positions match Color Management', async () => {
+    const view = createInstalledView({ backend: createFixtureBackend([extension()]) });
+    const reference = new Adw.ActionRow({ title: 'Color Management reference' });
+    const referenceSwitch = new Gtk.Switch({ valign: Gtk.Align.CENTER });
+    const referenceButton = new Gtk.Button({ icon_name: 'pan-end-symbolic', valign: Gtk.Align.CENTER });
+    referenceButton.add_css_class('flat');
+    reference.add_suffix(referenceSwitch);
+    reference.add_suffix(referenceButton);
+    view.userGroup.add(reference);
+    const window = new Adw.PreferencesWindow({ default_width: 900, default_height: 700 });
+    window.add(view.widget); window.present(); await tick();
+    try {
+        const row = view.rows.get('example@test');
+        const geometry = (owner, toggle, arrow) => {
+            const [toggleMapped, toggleBounds] = toggle.compute_bounds(owner);
+            const [arrowMapped, arrowBounds] = arrow.compute_bounds(owner);
+            assert(toggleMapped && arrowMapped, 'Suffixes have allocated bounds');
+            return {
+                switchEnd: toggleBounds.get_x() + toggleBounds.get_width(),
+                arrowCenter: arrowBounds.get_x() + arrowBounds.get_width() / 2,
+            };
+        };
+        const actual = geometry(row, row._toggle, row._preferences);
+        const expected = geometry(reference, referenceSwitch, referenceButton.get_child());
+        equal(actual, expected, `Color Management positions: expected ${JSON.stringify(expected)}`);
+    } finally { view.stop(); window.destroy(); }
+});
+
+test('whole extension row opens preferences while its switch remains independent', async () => {
+    const backend = createFixtureBackend([extension()]);
+    const opened = [];
+    const view = createInstalledView({ backend, onPreferences: uuid => opened.push(uuid) });
+    try {
+        const row = view.rows.get('example@test');
+        assert(row.activatable, 'The complete row is activatable');
+        row.emit('activated');
+        equal(opened, ['example@test'], 'Activating the row opens preferences once');
+        equal(backend.calls, [], 'Row navigation does not change enabled state');
+        switchFor(row).active = false;
+        await tick();
+        equal(opened, ['example@test'], 'Toggling the switch does not navigate');
+        equal(backend.calls, [['extension', 'example@test', false]], 'The switch only changes enabled state');
+        assert(row._preferences instanceof Gtk.Image, 'The arrow remains a presentation-only navigation image');
+    } finally { view.stop(); }
+});
+
+test('installed rows end with switch then navigation arrow and no expander', async () => {
+    const backend = createFixtureBackend([extension()]);
+    const view = createInstalledView({ backend });
+    try {
+        const row = view.rows.get('example@test');
+        const controls = descendants(row).filter(child =>
+            (child instanceof Gtk.Image && child.icon_name === 'go-next-symbolic') ||
+            child.get_name() === 'installed-enable' ||
+            (child instanceof Gtk.Image && child.icon_name === 'adw-expander-arrow-symbolic'));
+        equal(controls.map(child => child.get_name() === 'installed-enable' ? 'switch' : child.icon_name),
+            ['switch', 'go-next-symbolic'], 'Switch precedes the sole right navigation arrow');
+        assert(row instanceof Adw.ActionRow && !(row instanceof Adw.ExpanderRow), 'Installed row is not expandable');
+    } finally { view.stop(); }
+});
+
+test('extension information is available separately from the installed row', async () => {
+    assert(typeof createExtensionInfo === 'function', 'Extension information has a separate view');
+    const info = createExtensionInfo(extension({ description: '<b>Literal description</b>', state: 3, error: 'Failure', version: 42 }));
+    const labels = descendants(info.widget).filter(child => child instanceof Gtk.Label);
+    for (const text of ['<b>Literal description</b>', 'example@test', 'Error', 'Failure', '42'])
+        assert(labels.some(label => label.label === text && !label.use_markup), `Information text remains literal: ${text}`);
+});
 
 test('grouping and deterministic name/UUID order', async () => {
     const backend = createFixtureBackend([
@@ -66,20 +135,18 @@ test('global warning, independent preferences arrow/switch and literal metadata'
         assert(descendants(view.globalSwitch).some(child => child instanceof Gtk.Image && child.icon_name === 'application-x-addon-symbolic'), 'Extension puzzle prefix');
         assert(view.globalSwitch.get_parent() !== view.userGroup, 'Global switch is separate from extension groups');
         const row = view.rows.get('example@test');
-        const arrow = descendants(row).find(child => child instanceof Gtk.Button && child.icon_name === 'go-next-symbolic');
+        const arrow = descendants(row).find(child => child instanceof Gtk.Image && child.icon_name === 'go-next-symbolic');
         const toggle = switchFor(row);
-        assert(arrow?.visible, 'Preferences use a right arrow button');
+        assert(arrow?.visible, 'Preferences use the native right arrow image');
         assert(toggle, 'Enabled state uses its own suffix switch');
-        assert(!descendants(view.rows.get('no-prefs@test')).some(child => child instanceof Gtk.Button && child.icon_name === 'go-next-symbolic' && child.visible), 'No visible preferences arrow without prefs');
+        assert(view.rows.get('no-prefs@test').activatable && view.rows.get('no-prefs@test').tooltip_text === 'Extension Information', 'Information remains accessible without preferences');
         assert(!descendants(row).some(child => child instanceof Gtk.Button && child.icon_name === 'emblem-system-symbolic'), 'No preferences cog');
-        assert(descendants(row).some(child => child instanceof Gtk.Image && child.icon_name === 'adw-expander-arrow-symbolic'), 'Native expander chevron remains distinct');
-        arrow.emit('clicked');
+        assert(!descendants(row).some(child => child instanceof Gtk.Image && child.icon_name === 'adw-expander-arrow-symbolic'), 'No downward details chevron');
+        row.emit('activated');
         equal(opened, ['example@test'], 'Arrow invokes preferences only');
-        assert(!row.expanded && toggle.active, 'Preferences click neither expands nor toggles');
+        assert(toggle.active, 'Preferences click does not toggle');
         equal(backend.calls, [], 'Preferences click causes no backend writes');
-        row.expanded = true;
-        assert(toggle.active && row.expanded, 'Expansion is independent of enabled state');
-        for (const text of ['<b>Not markup</b>', '<i>Literal description</i>']) {
+        for (const text of ['<b>Not markup</b>', 'example@test']) {
             const label = descendants(row).find(child => child instanceof Gtk.Label && child.label === text);
             assert(label && !label.use_markup, `Untrusted text remains literal: ${text}`);
         }
@@ -102,7 +169,7 @@ test('global async requests preserve saved per-extension state and rollback', as
         equal(backend.calls, [['global', false]], 'Global toggle issues exactly one request');
         assert(!view.globalSwitch.sensitive, 'Global control disables during request');
         assert(switchFor(view.rows.get('example@test')).active && !switchFor(view.rows.get('example@test')).sensitive, 'Global off preserves saved active flag and locks individual switch');
-        assert(descendants(view.rows.get('example@test')).find(child => child instanceof Gtk.Button && child.icon_name === 'go-next-symbolic').sensitive, 'Preferences remain accessible globally off');
+        assert(view.rows.get('example@test').activatable, 'Preferences remain accessible globally off');
         finish();
         await tick();
         assert(view.globalSwitch.sensitive && !view.globalSwitch.active, 'Global off settles to backend state');
@@ -132,8 +199,8 @@ test('individual async requests disable only the switch and roll back failures',
         const toggle = switchFor(row);
         toggle.active = false;
         equal(backend.calls, [['extension', 'example@test', false]], 'One individual request');
-        assert(!toggle.sensitive && !row.expanded, 'Switch locks without expanding');
-        assert(descendants(row).find(child => child instanceof Gtk.Button && child.icon_name === 'go-next-symbolic').sensitive, 'Busy switch preserves preferences access');
+        assert(!toggle.sensitive && !(row instanceof Adw.ExpanderRow), 'Switch locks without exposing details');
+        assert(row.activatable, 'Busy switch preserves preferences access');
         backend.notify();
         assert(!toggle.active && !toggle.sensitive, 'Live event cannot undo pending switch request');
         finish();
@@ -160,7 +227,7 @@ test('locked extensions honor canChange without removing preferences', async () 
         for (const uuid of ['example@test', 'old@test']) {
             const row = view.rows.get(uuid);
             assert(!switchFor(row).sensitive && switchFor(row).active, 'Locked extension retains saved active flag');
-            descendants(row).find(child => child instanceof Gtk.Button && child.icon_name === 'go-next-symbolic').emit('clicked');
+            row.emit('activated');
         }
         equal(opened, ['example@test', 'old@test'], 'Locked extension still opens preferences');
         assert(switchFor(view.rows.get('authoritative@test')).sensitive, 'canChange is authoritative over state');
@@ -171,52 +238,50 @@ test('locked extensions honor canChange without removing preferences', async () 
     } finally { view.stop(); }
 });
 
-test('expanded details show literal errors/version and only safe HTTPS links', async () => {
+test('separate information shows literal errors/version and only safe HTTPS links', async () => {
     const urls = ['http://example.org/', 'javascript:alert(1)', 'file:///etc/passwd', 'https://',
         'https://user:secret@example.org/', 'https://example.org/\nother', 'https://example.org\\evil'];
     const backend = createFixtureBackend([
         extension({ state: 3, error: '<b>Failure & details</b>', version: 42 }),
         ...urls.map((url, index) => extension({ uuid: `unsafe-${index}@test`, url })),
     ]);
-    const view = createInstalledView({ backend });
-    try {
-        const row = view.rows.get('example@test');
-        row.expanded = true;
+    const info = createExtensionInfo(backend.extensions[0]);
+    {
+        const row = info.widget;
         const labels = descendants(row).filter(child => child instanceof Gtk.Label);
         for (const text of ['Error', '<b>Failure & details</b>', '42'])
             assert(labels.some(label => label.label === text && !label.use_markup), `Literal detail: ${text}`);
         const link = descendants(row).find(child => child instanceof Gtk.LinkButton);
         assert(link?.uri === 'https://example.org/', 'HTTPS website detail');
         for (const [index] of urls.entries())
-            assert(!descendants(view.rows.get(`unsafe-${index}@test`)).some(child => child instanceof Gtk.LinkButton && child.visible), 'Unsafe website has no visible link');
+            assert(!descendants(createExtensionInfo(backend.extensions[index + 1]).widget).some(child => child instanceof Gtk.LinkButton && child.visible), 'Unsafe website has no visible link');
         backend.extensions[0] = { ...backend.extensions[0], state: 4, error: '', version: 43, url: '' };
-        backend.notify();
+        info.update(backend.extensions[0]);
         assert(descendants(row).some(child => child instanceof Gtk.Label && child.label === 'Out of Date'), 'State details update live');
         assert(!descendants(row).some(child => child instanceof Gtk.Label && child.label === '<b>Failure & details</b>'), 'Stale error removed');
         assert(descendants(row).some(child => child instanceof Gtk.Label && child.label === '43'), 'Version detail updates live');
-    } finally { view.stop(); }
+    }
 });
 
-test('live metadata/add/remove/regroup preserve expansion and empty groups', async () => {
+test('live metadata/add/remove/regroup preserve rows and empty groups', async () => {
     const backend = createFixtureBackend([extension(), extension({ uuid: 'system@test', type: 1 })]);
     const opened = [];
     const view = createInstalledView({ backend, onPreferences: uuid => opened.push(uuid) });
     try {
         const row = view.rows.get('example@test');
-        row.expanded = true;
         backend.extensions = [extension({ uuid: 'added@test', name: 'Alpha' }),
             extension({ name: 'Changed', description: 'New description', type: 1, hasPrefs: false, enabled: false })];
         backend.notify();
         assert(view.rows.size === 2 && !view.rows.has('system@test'), 'Deletion removes UUID from map');
-        assert(view.rows.get('example@test') === row && row.expanded, 'UUID retains native row and expansion');
+        assert(view.rows.get('example@test') === row, 'UUID retains native row');
         equal(groupRows(view.userGroup).map(item => item.subtitle), ['added@test'], 'Added user row');
         equal(groupRows(view.systemGroup).map(item => item.subtitle), ['example@test'], 'Changed type moves row');
         assert(row.title === 'Changed' && !switchFor(row).active, 'Metadata and saved enabled state update');
-        assert(descendants(row).some(child => child instanceof Gtk.Label && child.label === 'New description'), 'Description updates');
-        assert(!descendants(row).find(child => child instanceof Gtk.Button && child.icon_name === 'go-next-symbolic').visible, 'hasPrefs changes hide arrow');
+        assert(!descendants(row).some(child => child instanceof Gtk.Label && child.label === 'New description'), 'Description lives on the extension subpage');
+        assert(row.tooltip_text === 'Extension Information' && row.activatable, 'hasPrefs changes retain information access');
         backend.extensions[1].hasPrefs = true;
         for (let i = 0; i < 4; i++) backend.notify();
-        descendants(row).find(child => child instanceof Gtk.Button && child.icon_name === 'go-next-symbolic').emit('clicked');
+        row.emit('activated');
         equal(opened, ['example@test'], 'Live events never duplicate preferences callbacks');
         equal(backend.calls, [], 'Live events never write backend state');
         backend.extensions = [];
@@ -233,16 +298,16 @@ test('live metadata/add/remove/regroup preserve expansion and empty groups', asy
     } finally { view.stop(); }
 });
 
-test('suffix controls appear preferences arrow then enabled switch then chevron', async () => {
+test('suffix controls end with enabled switch then navigation arrow', async () => {
     const backend = createFixtureBackend([extension()]);
     const view = createInstalledView({ backend });
     try {
         const controls = descendants(view.rows.get('example@test')).filter(child =>
-            (child instanceof Gtk.Button && child.icon_name === 'go-next-symbolic') ||
+            (child instanceof Gtk.Image && child.icon_name === 'go-next-symbolic') ||
             child.get_name() === 'installed-enable' ||
             (child instanceof Gtk.Image && child.icon_name === 'adw-expander-arrow-symbolic'));
         equal(controls.map(child => child.get_name() === 'installed-enable' ? 'switch' : child.icon_name),
-            ['go-next-symbolic', 'switch', 'adw-expander-arrow-symbolic'], 'Screenshot suffix order');
+            ['switch', 'go-next-symbolic'], 'Screenshot suffix order');
     } finally { view.stop(); }
 });
 
@@ -261,8 +326,7 @@ test('stop locks controls and ignores pending completions', async () => {
     view.stop();
     assert(backend.listeners.size === 0, 'Stop removes subscription during request');
     assert(!view.globalSwitch.sensitive && !switchFor(view.rows.get('second@test')).sensitive, 'Stop locks non-busy controls too');
-    const arrow = descendants(row).find(child => child instanceof Gtk.Button && child.icon_name === 'go-next-symbolic');
-    arrow.emit('clicked');
+    row.emit('activated');
     view.globalSwitch.active = false;
     rejectRequest(new Error('late error'));
     await tick();

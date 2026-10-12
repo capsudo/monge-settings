@@ -28,6 +28,9 @@ export async function run(controller) {
     const check = (value, label) => { if (!value) throw new Error(label); checks.push(label); };
     const file = Gio.File.new_for_path(GLib.getenv('MONGE_SETTINGS_RESULT'));
     try {
+        const schemas = Gio.SettingsSchemaSource.get_default();
+        for (const id of ['org.freedesktop.ColorHelper', 'org.gnome.settings-daemon.plugins.color'])
+            check(Boolean(schemas.lookup(id, true)), `Color Management runtime schema is available: ${id}`);
         await stable(window);
         check(GObject.type_name_from_instance(window) === 'CcWindow', 'actual native GNOME Settings CcWindow');
         check(window instanceof Adw.PreferencesWindow, 'real native preferences-window root');
@@ -37,6 +40,23 @@ export async function run(controller) {
         check(controller.backend.calls.length === 0 && !window._extension.uuid, 'startup loads no preferences or settings writes');
         check(controller.current.installed.globalSwitch.active, 'global Use Extensions switch');
         check(controller.current.installed.rows.size === 3, 'user and system extension rows');
+        const installedRow = controller.current.installed.rows.get('modern@monge.test');
+        check(installedRow instanceof Adw.ActionRow && !(installedRow instanceof Adw.ExpanderRow), 'installed rows have no down-arrow expander');
+        check(installedRow._preferences.get_allocation().x > installedRow._toggle.get_allocation().x,
+            'preferences arrow is visually after the switch');
+        check(installedRow._preferences instanceof Gtk.Image && installedRow.activatable,
+            'whole installed row activates with Apps-style arrow spacing');
+        installedRow._toggle.active = false;
+        await delay(20);
+        check(!window._extension.uuid && controller.current.navigation.get_visible_page() === controller.current.landing,
+            'individual switch interaction does not enter preferences');
+        installedRow._toggle.active = true;
+        await delay(20);
+        installedRow.emit('activated');
+        await controller.idle;
+        check(window._extension.uuid === 'modern@monge.test', 'row activation opens the extension preferences');
+        check(await controller.back(), 'Back after whole-row activation');
+        await stable(window);
         snapshot(window, 'installed');
         controller.current.viewStack.visible_child_name = 'browse';
         for (let attempt = 0; attempt < 100 && !controller.current.browse.widget.get_mapped(); attempt++) await delay(20);
@@ -58,11 +78,31 @@ export async function run(controller) {
         check(await controller.back(), 'catalog details second Back');
         controller.current.viewStack.visible_child_name = 'installed';
         const surface = window.get_surface(); const size = window.get_default_size().join(',');
+        check(await controller.select('information@monge.test'), 'extension without preferences opens information');
+        check(controller.current.informationOnlyPage === window.visible_page && !window._extension.uuid,
+            'information-only extension loads no preferences code');
+        check(window.title === 'Information Only', 'information-only header shows the extension name');
+        check(controller.current.information.widget.get_root() === window, 'information-only page uses native Settings root');
+        await stable(window); snapshot(window, 'information');
+        check(await controller.back() && !window.visible_page, 'Back removes information-only page');
         check(await controller.select('modern@monge.test'), 'modern native preferences loaded');
         const preferences = window._extension.stateObj;
         check(window.visible_page.get_root() === window, 'native preferences rooted in actual Settings');
         check(controller.current.navigation.get_visible_page() === controller.current.preferencesPage, 'preferences are an in-window navigation page');
         check(!window.modal && window.get_surface() === surface, 'no separate modal or replacement surface');
+        const information = controller.current.information.widget;
+        check(information.get_root() === window && information.get_parent().get_first_child() === information,
+            'extension information is above its native settings groups');
+        const modern = controller.backend.extensions.find(item => item.uuid === 'modern@monge.test');
+        modern.version = 42;
+        await controller.backend.refresh();
+        const findLabel = (widget, text) => {
+            if (widget instanceof Gtk.Label && widget.label === text) return true;
+            for (let child = widget.get_first_child(); child; child = child.get_next_sibling())
+                if (findLabel(child, text)) return true;
+            return false;
+        };
+        check(findLabel(information, '42'), 'open extension information updates from backend events');
         await stable(window); snapshot(window, 'preferences');
         check(window.get_default_size().join(',') === size, 'preferences preserve Settings geometry');
         check(!window.search_enabled, 'preferences retain the Settings-style header without a search button');
@@ -77,10 +117,15 @@ export async function run(controller) {
         check(controller.current.navigation.get_visible_page() === controller.current.landing, 'Back restores Installed');
         check(await controller.select('legacy@monge.test'), 'legacy native preferences loaded');
         check(window.visible_page.get_root() === window && window.get_surface() === surface, 'legacy preferences use same actual window');
+        check(controller.current.information.widget.get_parent().get_first_child() === controller.current.information.widget,
+            'legacy preferences also show information above settings');
         check(await controller.back(), 'legacy Back retirement');
         check(await controller.select('modern@monge.test'), 'modern round trip');
         const veto = window.connect_after('close-request', () => true);
         check(!await controller.back(), 'Back respects native close veto');
+        const retainedInformation = controller.current.information.widget;
+        check(!await controller.select('legacy@monge.test') && controller.current.information.widget === retainedInformation,
+            'veto keeps the previous extension information');
         check(controller.current.navigation.get_visible_page() === controller.current.preferencesPage, 'veto preserves displayed preferences');
         const retainedPanel = controller.current.panel;
         window.get_application().activate_action('launch-panel', new GLib.Variant('(sav)', ['background', []]));

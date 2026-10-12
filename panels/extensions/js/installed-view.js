@@ -13,6 +13,35 @@ function safeWebsite(url) {
     } catch (_error) { return null; }
 }
 
+export function createExtensionInfo(item) {
+    const widget = new Adw.PreferencesGroup({ title: 'Extension Information' });
+    const description = new Adw.ActionRow({ use_markup: false, title_lines: 0 });
+    const uuid = new Adw.ActionRow({ title: 'UUID', use_markup: false });
+    const state = new Adw.ActionRow({ use_markup: false, subtitle_lines: 0 });
+    const version = new Adw.ActionRow({ title: 'Version', use_markup: false });
+    const website = new Adw.ActionRow({ title: 'Website', use_markup: false });
+    for (const row of [description, uuid, state, version, website]) widget.add(row);
+    let link = null;
+    function update(value) {
+        description.title = value.description ?? '';
+        description.visible = Boolean(value.description);
+        uuid.subtitle = value.uuid;
+        state.title = stateTitles.get(value.state) ?? 'Unknown State';
+        state.subtitle = value.error || '';
+        version.subtitle = value.version == null ? '' : String(value.version);
+        version.visible = Boolean(version.subtitle);
+        const url = safeWebsite(value.url);
+        if (link) { website.remove(link); link = null; }
+        website.visible = Boolean(url);
+        if (url) {
+            link = new Gtk.LinkButton({ uri: url, label: 'Visit Website', valign: Gtk.Align.CENTER });
+            website.add_suffix(link);
+        }
+    }
+    update(item);
+    return { widget, update };
+}
+
 export function createInstalledView({ backend, onPreferences = () => {}, onError = () => {} }) {
     const widget = new Adw.PreferencesPage();
     const globalGroup = new Adw.PreferencesGroup();
@@ -56,27 +85,18 @@ export function createInstalledView({ backend, onPreferences = () => {}, onError
     });
 
     function createRow(item) {
-        const row = new Adw.ExpanderRow({ title: item.name, subtitle: item.uuid, use_markup: false });
+        const row = new Adw.ActionRow({ title: item.name, subtitle: item.uuid, use_markup: false, activatable: true });
         row._busy = false;
         row._toggle = new Gtk.Switch({ name: 'installed-enable', active: item.enabled, valign: Gtk.Align.CENTER });
-        row._preferences = new Gtk.Button({ icon_name: 'go-next-symbolic',
-            tooltip_text: 'Preferences', valign: Gtk.Align.CENTER, visible: item.hasPrefs });
-        row._preferences.add_css_class('flat');
-        row._preferences.connect('clicked', () => {
+        row._preferences = new Gtk.Image({ icon_name: 'go-next-symbolic',
+            accessible_role: Gtk.AccessibleRole.PRESENTATION, valign: Gtk.Align.CENTER, margin_start: 9, margin_end: 9 });
+        row.connect('activated', () => {
             if (!stopped && rows.get(item.uuid) === row) onPreferences(item.uuid);
         });
         // ExpanderRow prepends suffixes; insert the switch first to display arrow, switch, native chevron.
+        // ActionRow appends suffixes instead, placing the navigation arrow after the switch.
         row.add_suffix(row._toggle);
         row.add_suffix(row._preferences);
-        row._description = new Adw.ActionRow({ title: item.description, use_markup: false, title_lines: 0 });
-        row.add_row(row._description);
-        row._state = new Adw.ActionRow({ use_markup: false, subtitle_lines: 0 });
-        row._version = new Adw.ActionRow({ title: 'Version', use_markup: false });
-        row._website = new Adw.ActionRow({ title: 'Website', use_markup: false });
-        row._link = null;
-        row.add_row(row._state);
-        row.add_row(row._version);
-        row.add_row(row._website);
         row._toggle.connect('notify::active', async () => {
             if (syncing || stopped || row._busy || rows.get(item.uuid) !== row || !row._toggle.sensitive) return;
             row._busy = true;
@@ -104,23 +124,7 @@ export function createInstalledView({ backend, onPreferences = () => {}, onError
             const row = rows.get(item.uuid) ?? createRow(item);
             row._item = item;
             row.title = item.name;
-            row._description.title = item.description;
-            row._description.visible = Boolean(item.description);
-            row._state.title = stateTitles.get(item.state) ?? 'Unknown State';
-            row._state.subtitle = item.error || '';
-            row._version.subtitle = item.version == null ? '' : String(item.version);
-            row._version.visible = Boolean(row._version.subtitle);
-            const website = safeWebsite(item.url);
-            if (row._link) {
-                row._website.remove(row._link);
-                row._link = null;
-            }
-            row._website.visible = Boolean(website);
-            if (website) {
-                row._link = new Gtk.LinkButton({ uri: website, label: 'Visit Website', valign: Gtk.Align.CENTER });
-                row._website.add_suffix(row._link);
-            }
-            row._preferences.visible = item.hasPrefs;
+            row.tooltip_text = item.hasPrefs ? 'Preferences' : 'Extension Information';
             row._group = item.type === 1 ? systemGroup : userGroup;
             row._group.add(row);
             rows.set(item.uuid, row);
@@ -140,6 +144,7 @@ export function createInstalledView({ backend, onPreferences = () => {}, onError
             for (const row of rows.values()) {
                 row._toggle.sensitive = false;
                 row._preferences.sensitive = false;
+                row.activatable = false;
             }
         },
     };

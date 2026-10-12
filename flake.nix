@@ -22,9 +22,10 @@
           inherit (pkgs) lib;
           upstream = pkgs.gnome-control-center;
           runtime = [ pkgs.gjs pkgs.gnome-shell pkgs.libsoup_3 pkgs.gtk4 pkgs.libadwaita pkgs.glib ];
-          schemaPackages = [ pkgs.gsettings-desktop-schemas pkgs.gtk3 pkgs.mutter pkgs.gnome-shell ];
+          schemaPackages = (upstream.buildInputs or []) ++ runtime;
           dataPath = lib.makeSearchPath "share" ((upstream.buildInputs or []) ++ runtime)
-            + ":" + lib.concatMapStringsSep ":" pkgs.glib.getSchemaDataDirPath schemaPackages;
+            + ":" + lib.concatMapStringsSep ":" (package:
+              pkgs.glib.getSchemaDataDirPath (package.out or package)) schemaPackages;
           typelibPath = lib.concatStringsSep ":" (
             [
               "${pkgs.gnome-shell}/lib/gnome-shell/girepository-1.0"

@@ -12,7 +12,7 @@ export async function createBackend() {
     let enabled = true;
     const extensions = [
         { uuid: 'modern@monge.test', name: 'Example Extension', description: 'Modern native preferences fixture.', type: 2,
-            state: 1, enabled: true, canChange: true, hasPrefs: true, version: 1, path: `${fixtureRoot}/modern@monge.test` },
+            state: 1, enabled: true, canChange: true, hasPrefs: true, version: 1, url: 'https://example.org/', path: `${fixtureRoot}/modern@monge.test` },
         { uuid: 'legacy@monge.test', name: 'System Example', description: 'Legacy native preferences fixture.', type: 1,
             state: 2, enabled: false, canChange: true, hasPrefs: true, version: 1, path: `${fixtureRoot}/legacy@monge.test` },
         { uuid: 'information@monge.test', name: 'Information Only', description: 'An extension without preferences.', type: 2,
