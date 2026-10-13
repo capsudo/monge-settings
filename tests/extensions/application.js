@@ -1,6 +1,7 @@
 import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Gdk from 'gi://Gdk?version=4.0';
 import GdkPixbuf from 'gi://GdkPixbuf';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
@@ -173,11 +174,35 @@ export async function run(controller) {
             (inlinePreview.get_width() + inlinePreview.paintable.get_width() * previewScale) / 2,
             'expand control stays inside the painted screenshot rather than its letterbox');
         screenshotDetails.expand.emit('clicked'); await delay(100);
-        check(screenshotDetails.imageDialog instanceof Adw.Dialog && window.get_visible_dialog() === screenshotDetails.imageDialog,
-            'screenshot expansion presents an enlarged native dialog on the Settings root');
+        check(screenshotDetails.imagePage instanceof Adw.NavigationPage &&
+            controller.current.navigation.get_visible_page() === screenshotDetails.imagePage && !window.get_visible_dialog(),
+            'screenshot expansion uses an in-pane navigation page instead of a whole-window dialog');
+        const screenshotSize = window.get_default_size();
+        window.set_default_size(1886, 1028); await stable(window);
+        const enlargedPicture = screenshotDetails.imagePage.child.content;
+        check(enlargedPicture.get_width() === controller.current.navigation.get_width(),
+            'enlarged screenshot fills the available main-pane width without a fixed dialog limit');
+        for (const [width, height] of [[320, 160], [160, 320], [320, 213]]) {
+            const image = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, true, 8, width, height);
+            image.fill(0x7799bbff); enlargedPicture.paintable = Gdk.Texture.new_for_pixbuf(image);
+            await delay(50);
+            const rendered = new Gtk.Snapshot();
+            new Gtk.WidgetPaintable({ widget: enlargedPicture }).snapshot(rendered, enlargedPicture.get_width(), enlargedPicture.get_height());
+            const painted = rendered.to_node().get_bounds();
+            const scale = Math.min(enlargedPicture.get_width() / width, enlargedPicture.get_height() / height);
+            check(Math.abs(painted.get_width() - width * scale) <= 1 && Math.abs(painted.get_height() - height * scale) <= 1,
+                `enlarged ${width}×${height} screenshot fits the pane without stretching or cropping`);
+            check(Math.abs(painted.get_x() + painted.get_width() / 2 - enlargedPicture.get_width() / 2) <= 1 &&
+                Math.abs(painted.get_y() + painted.get_height() / 2 - enlargedPicture.get_height() / 2) <= 1,
+                `painted ${width}×${height} screenshot is centered on both axes`);
+        }
+        enlargedPicture.paintable = inlinePreview.paintable; await delay(50);
         snapshot(window, 'screenshot-expanded');
-        screenshotDetails.imageDialog.close(); await delay(100);
-        check(!screenshotDetails.imageDialog && screenshotDetails.preview.get_root() === window,
+        check(await controller.back(), 'Back closes only the enlarged screenshot'); await delay(100);
+        check(!enlargedPicture.paintable, 'closing the viewer releases its screenshot paintable');
+        window.set_default_size(...screenshotSize); await stable(window);
+        check(!screenshotDetails.imagePage && screenshotDetails.preview.get_root() === window &&
+            controller.current.catalogDetailsView === screenshotDetails && controller.current.navigation.get_visible_page() === controller.current.details,
             'closing screenshot enlargement retains the inline preview and Settings root');
         controller.current.catalogDetailsView.action.emit('clicked');
         for (let attempt = 0; attempt < 100 && controller.current.catalogDetailsView.action.label !== 'Remove…'; attempt++) await delay(10);
@@ -208,6 +233,15 @@ export async function run(controller) {
         };
         const nativeBack = findNativeBack(controller.current.details);
         check(Boolean(nativeBack), 'catalog Details exposes its native header Back button');
+        await retiringCatalogDetails.start(); await stable(window);
+        retiringCatalogDetails.expand.emit('clicked'); await delay(100);
+        const reopenedImage = retiringCatalogDetails.imagePage.child.content;
+        const imageBack = findNativeBack(retiringCatalogDetails.imagePage);
+        check(Boolean(imageBack), 'screenshot viewer exposes the native header Back button');
+        imageBack.emit('clicked'); await delay(100);
+        check(!retiringCatalogDetails.imagePage && !reopenedImage.paintable && catalogStops === 0 &&
+            controller.current.navigation.get_visible_page() === controller.current.details,
+            'native screenshot Back preserves catalog Details and releases only the viewer');
         nativeBack.emit('clicked'); await delay(20);
         check(controller.current.navigation.get_visible_page() === controller.current.landing &&
             controller.current.catalogDetailsView === null && catalogStops === 1, 'native catalog Back retires the Details resources');
@@ -269,6 +303,14 @@ export async function run(controller) {
         check(controller.current.detailsView.preview.get_allocated_height() > 0,
             'the decoded screenshot occupies visible space instead of collapsing in the scrolling page');
         snapshot(window, 'details');
+        const installedScreenshot = controller.current.detailsView;
+        installedScreenshot.expand.emit('clicked'); await delay(100);
+        check(installedScreenshot.imagePage.child.content.get_width() === controller.current.navigation.get_width() &&
+            !preferences.closed && window._extension.stateObj === preferences,
+            'installed screenshot fills the main pane without retiring native preferences');
+        check(await controller.back() && !installedScreenshot.imagePage && !preferences.closed && window.visible_page === selectedPage &&
+            controller.pageLayout.viewStack.visible_child_name === 'details',
+            'Back from the installed screenshot restores Details with its native session intact');
         const headerBeforeScroll = headerBounds(extensionHeader).get_y();
         const tabsBeforeScroll = headerBounds(controller.pageLayout.switcher).get_y();
         const detailsAdjustment = controller.current.detailsView.widget.get_vadjustment();
@@ -428,9 +470,14 @@ export async function run(controller) {
         check(await controller.back(), 'Back after veto removed');
         check(await controller.select('modern@monge.test'), 'section navigation starts with native session');
         const leaving = window._extension.stateObj;
+        controller.pageLayout.viewStack.visible_child_name = 'details'; await controller.current.detailsView.start();
+        const leavingDetails = controller.current.detailsView;
+        leavingDetails.expand.emit('clicked'); await delay(100);
+        const leavingPicture = leavingDetails.imagePage.child.content;
         window.get_application().activate_action('launch-panel', new GLib.Variant('(sav)', ['background', []]));
         await controller.idle; await stable(window);
         check(!controller.current && leaving.closed && !window._extension.uuid, 'another actual Settings section retires preferences first');
+        check(!leavingDetails.imagePage && !leavingPicture.paintable, 'section navigation retires the enlarged screenshot and its paintable');
         check(window.get_surface() === surface, 'normal Settings navigation keeps same root and surface');
         for (const [section, type] of [['applications', 'CcApplicationsPanel'], ['keyboard', 'CcKeyboardPanel']]) {
             window.get_application().activate_action('launch-panel', new GLib.Variant('(sav)', [section, []]));

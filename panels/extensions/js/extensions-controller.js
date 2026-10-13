@@ -166,7 +166,7 @@ export class ExtensionsController {
         this.clearCatalogDetails();
         if (current.details?.get_parent() === current.navigation) current.navigation.remove(current.details);
         const installed = this.backend.extensions.find(value => value.uuid === item.uuid);
-        const view = createExtensionDetails({ item: installed ?? item, catalog: this.catalog, installed: Boolean(installed),
+        const view = createExtensionDetails({ item: installed ?? item, catalog: this.catalog, installed: Boolean(installed), navigation: current.navigation,
             onRemove: uuid => this.remove(uuid).catch(error => { this.report(error); throw error; }),
             canRemove: () => this.backend.canRemove?.(item.uuid) === true,
             onInstall: async uuid => {
@@ -231,6 +231,9 @@ export class ExtensionsController {
                     if (request !== this._latest || this.closing) { request.resolve(false); continue; }
                     this.showPreferences(item); request.resolve(true);
                 } else {
+                    if (request.kind === 'back' && (current.detailsView?.closeImage() || current.catalogDetailsView?.closeImage())) {
+                        request.resolve(true); continue;
+                    }
                     if (request.kind === 'remove' && (!this.backend.canRemove?.(request.uuid) ||
                         (current.informationItem?.uuid !== request.uuid && current.catalogItem?.uuid !== request.uuid)))
                         throw new Error('This extension cannot be removed from this page');
@@ -269,7 +272,7 @@ export class ExtensionsController {
         item ??= this.backend.extensions.find(value => value.uuid === this.window._extension.uuid);
         if (!item) return;
         this.clearInformation();
-        current.detailsView = createExtensionDetails({ item, catalog: this.catalog,
+        current.detailsView = createExtensionDetails({ item, catalog: this.catalog, navigation: current.navigation,
             onRemove: uuid => this.remove(uuid).catch(error => { this.report(error); throw error; }),
             canRemove: () => this.backend.canRemove?.(item.uuid) === true });
         this.pageLayout.details.append(current.detailsView.widget);

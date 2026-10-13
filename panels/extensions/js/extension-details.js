@@ -15,7 +15,7 @@ function safeLink(value) {
 }
 
 export function createExtensionDetails({ item, catalog, installed: initiallyInstalled = true, onInstall, canInstall = () => true,
-    onRemove, canRemove = () => false }) {
+    onRemove, canRemove = () => false, navigation = null }) {
     ensureDetailsStyle();
     const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 24,
         margin_start: 24, margin_end: 24, margin_top: 32, margin_bottom: 32 });
@@ -88,17 +88,35 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
     let removing = false;
     let removalDialog = null;
     let loading = Promise.resolve();
-    let imageDialog = null;
+    let imagePage = null;
+    let imagePicture = null;
+    let imagePoppedSignal = 0;
+    function clearImage() {
+        const page = imagePage; imagePage = null;
+        if (imagePoppedSignal) { navigation.disconnect(imagePoppedSignal); imagePoppedSignal = 0; }
+        if (page?.get_parent() === navigation) navigation.remove(page);
+        if (imagePicture) imagePicture.paintable = null;
+        imagePicture = null;
+    }
+    function closeImage() {
+        if (!imagePage) return false;
+        if (navigation.get_visible_page() === imagePage) navigation.pop();
+        clearImage();
+        return true;
+    }
     expand.connect('clicked', () => {
-        if (stopped || !preview.paintable || !widget.get_root()) return;
-        if (imageDialog) { imageDialog.present(widget); return; }
+        if (stopped || !preview.paintable || !widget.get_root() || !navigation || imagePage) return;
         const picture = new Gtk.Picture({ paintable: preview.paintable, can_shrink: true,
             content_fit: Gtk.ContentFit.CONTAIN, hexpand: true, vexpand: true });
-        const toolbar = new Adw.ToolbarView({ content: picture }); toolbar.add_top_bar(new Adw.HeaderBar());
-        const dialog = new Adw.Dialog({ title: 'Extension Screenshot', content_width: 1000, content_height: 720, child: toolbar });
-        imageDialog = dialog;
-        dialog.connect('closed', () => { if (imageDialog === dialog) imageDialog = null; picture.paintable = null; });
-        dialog.present(widget);
+        const toolbar = new Adw.ToolbarView({ content: picture });
+        toolbar.add_top_bar(new Adw.HeaderBar({ title_widget: new Adw.WindowTitle({ title: item.name }) }));
+        imagePage = new Adw.NavigationPage({ title: item.name, child: toolbar });
+        imagePicture = picture;
+        imagePoppedSignal = navigation.connect('popped', (_navigation, page) => {
+            if (page !== imagePage) return;
+            clearImage(); expand.grab_focus();
+        });
+        navigation.push(imagePage);
     });
     const linkRows = [];
     function updateLinks() {
@@ -245,8 +263,8 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
     retry.connect('clicked', start);
     update(item);
     return { widget, information, title, author, action, description, metrics, links, reviews, downloads, version, sessionModes, preview, expand, retry,
-        get imageDialog() { return imageDialog; },
+        get imagePage() { return imagePage; }, closeImage,
         get removalDialog() { return removalDialog; },
-        start, update, stop() { stopped = true; removalDialog?.force_close(); removalDialog = null; imageDialog?.force_close(); imageDialog = null;
+        start, update, stop() { stopped = true; removalDialog?.force_close(); removalDialog = null; closeImage();
             request?.cancel(); request = null; reviews.stop(); } };
 }
