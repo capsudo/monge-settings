@@ -10,6 +10,11 @@ function find(widget, type) {
     return null;
 }
 
+export function createPendingUpdateBanner() {
+    return new Adw.Banner({ title: 'This extension will be updated on next login', button_label: 'Log Out…',
+        button_style: Adw.BannerButtonStyle.SUGGESTED, revealed: false });
+}
+
 export function createExtensionPageLayout(native) {
     const nativeSwitcher = find(native, Adw.ViewSwitcher);
     const header = find(native, Adw.HeaderBar);
@@ -34,7 +39,10 @@ export function createExtensionPageLayout(native) {
     preferences.append(originalContent);
     viewStack.add_titled_with_icon(details, 'details', 'Details', 'dialog-information-symbolic');
     viewStack.add_titled_with_icon(preferences, 'preferences', 'Preferences', 'emblem-system-symbolic');
-    toolbar.content = viewStack;
+    const pendingBanner = createPendingUpdateBanner();
+    const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true });
+    content.append(pendingBanner); content.append(viewStack);
+    toolbar.content = content;
     const switcher = new Adw.ViewSwitcher({ stack: viewStack, policy: Adw.ViewSwitcherPolicy.WIDE });
     header.title_widget = switcher;
     const pages = nativeSwitcher.stack.get_pages();
@@ -56,13 +64,14 @@ export function createExtensionPageLayout(native) {
     const pagesSignal = pages.connect('items-changed', sync);
     sync();
     return {
-        header, viewStack, switcher, inlineSwitcher, details, preferences,
+        header, viewStack, switcher, inlineSwitcher, details, preferences, pendingBanner,
         originalTitle, originalContent,
         stop() {
             pages.disconnect(pagesSignal);
             for (const [page, signal] of watched) page.disconnect(signal);
             watched.clear();
         },
+        setPendingUpdate(value) { pendingBanner.revealed = value === true; },
         setHasPreferences(value) {
             viewStack.get_page(preferences).visible = value;
             switcher.visible = value;

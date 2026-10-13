@@ -175,6 +175,12 @@ export async function run(controller) {
         check(controller.backend.extensions.some(item => item.uuid === 'catalog@monge.test') &&
             controller.current.catalogDetailsView.installedVersion.label === 'v31', 'installation updates the shared Details badge from backend metadata');
         check(controller.current.installed.rows.has('catalog@monge.test'), 'installation refreshes the Installed rows without reopening Settings');
+        check(!controller.current.catalogPendingBanner.revealed, 'catalog page does not show a pending banner for an ordinary installation');
+        const installedCatalog = controller.backend.extensions.find(item => item.uuid === 'catalog@monge.test');
+        installedCatalog.hasUpdate = true; await controller.backend.refresh();
+        check(controller.current.catalogPendingBanner.revealed, 'catalog Details shows the banner when the installed extension gains a pending update');
+        installedCatalog.hasUpdate = false; await controller.backend.refresh();
+        check(!controller.current.catalogPendingBanner.revealed, 'catalog pending banner follows live installed state');
         check(controller.current.navigation.get_visible_page() === controller.current.details && !window._extension.uuid,
             'Browse details use in-window navigation without loading preferences');
         check(await controller.back() && controller.current.viewStack.visible_child_name === 'browse', 'Back from catalog details restores Browse');
@@ -201,12 +207,20 @@ export async function run(controller) {
         check(await controller.select('information@monge.test'), 'extension without preferences opens information');
         check(controller.pageLayout.viewStack.visible_child_name === 'details' && !window._extension.uuid,
             'information-only extension loads no preferences code');
+        check(!controller.pageLayout.pendingBanner.revealed, 'available-only extension has no pending-update page banner');
         check(window.title === 'Information Only', 'information-only header shows the extension name');
         check(controller.current.information.widget.get_root() === window, 'information-only page uses native Settings root');
         check(controller.viewState.get() === 'preferences', 'Details-only extensions do not overwrite the remembered Preferences view');
         await stable(window); snapshot(window, 'information');
         check(await controller.back() && !window.visible_page, 'Back removes information-only page');
         check(await controller.select('modern@monge.test'), 'modern native preferences loaded');
+        check(controller.pageLayout.pendingBanner.revealed && controller.pageLayout.pendingBanner.get_root() === window &&
+            controller.pageLayout.pendingBanner.get_parent() === controller.pageLayout.viewStack.get_parent(),
+            'pending update banner is above the shared Details/Preferences content');
+        const pageLogoutCount = controller.backend.calls.filter(([method]) => method === 'logout').length;
+        controller.pageLayout.pendingBanner.emit('button-clicked'); await delay(10);
+        check(controller.backend.calls.filter(([method]) => method === 'logout').length === pageLogoutCount + 1,
+            'extension page logout uses the same explicit native confirmation request');
         const preferences = window._extension.stateObj;
         check(window.visible_page.get_root() === window, 'native preferences rooted in actual Settings');
         check(controller.current.navigation.get_visible_page() === controller.current.preferencesPage, 'preferences are an in-window navigation page');
@@ -221,6 +235,7 @@ export async function run(controller) {
         const selectedPage = window.visible_page;
         controller.pageLayout.viewStack.visible_child_name = 'details';
         await controller.current.detailsView.start();
+        check(controller.pageLayout.pendingBanner.revealed, 'pending update banner remains visible on Details');
         await delay(50);
         check(!preferences.closed && window._extension.stateObj === preferences && window.visible_page === selectedPage,
             'Details selection retains the loaded extension and its current preferences page');
@@ -231,6 +246,12 @@ export async function run(controller) {
         controller.pageLayout.viewStack.visible_child_name = 'preferences';
         check(window.visible_page === selectedPage && window.get_surface() === surface,
             'Preferences selection returns to the same native page and surface');
+        check(controller.pageLayout.pendingBanner.revealed, 'pending update banner remains visible on Preferences');
+        const selectedUpdate = controller.backend.extensions.find(item => item.uuid === 'modern@monge.test');
+        selectedUpdate.hasUpdate = false; await controller.backend.refresh();
+        check(!controller.pageLayout.pendingBanner.revealed && !preferences.closed, 'live pending-update removal hides the banner without retiring preferences');
+        selectedUpdate.hasUpdate = true; await controller.backend.refresh();
+        check(controller.pageLayout.pendingBanner.revealed, 'live pending-update addition reveals the extension banner');
         check(controller.current.detailsView.author.label === 'By Example Author' &&
             controller.current.detailsView.downloads.subtitle === '1,234', 'Details shows catalog author and downloads');
         const modern = controller.backend.extensions.find(item => item.uuid === 'modern@monge.test');
@@ -262,8 +283,10 @@ export async function run(controller) {
         check(await controller.back() && window._extension.uuid === 'modern@monge.test' && !preferences.closed,
             'Back from a legacy preferences subpage keeps its extension session');
         check(await controller.back() && preferences.closed, 'Back delivers native close-request cleanup');
+        check(!controller.pageLayout.pendingBanner.revealed, 'Back clears the extension-specific pending banner');
         check(controller.current.navigation.get_visible_page() === controller.current.landing, 'Back restores Installed');
         check(await controller.select('legacy@monge.test'), 'legacy native preferences loaded');
+        check(!controller.pageLayout.pendingBanner.revealed, 'switching to a non-pending extension does not retain the banner');
         check(window.visible_page.get_root() === window && window.get_surface() === surface, 'legacy preferences use same actual window');
         check(controller.current.information.widget.is_ancestor(controller.pageLayout.details) &&
             !controller.pageLayout.inlineSwitcher.visible, 'legacy details are separate and single-page preferences hide the inline switcher');

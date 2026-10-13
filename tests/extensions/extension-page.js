@@ -17,6 +17,11 @@ for (const page of pages) {
 window.present(); await tick();
 try {
     assert(layout.switcher instanceof Adw.ViewSwitcher, 'Details/Preferences use the header view switcher');
+    assert(layout.pendingBanner instanceof Adw.Banner && !layout.pendingBanner.revealed,
+        'Extension page owns an initially hidden pending-update banner');
+    layout.setPendingUpdate(true);
+    assert(layout.pendingBanner.revealed && layout.pendingBanner.button_label === 'Log Out…' &&
+        layout.pendingBanner.get_parent() === layout.viewStack.get_parent(), 'Pending banner sits above both tabs, outside their content');
     assert(layout.inlineSwitcher instanceof Adw.InlineViewSwitcher, 'Native page tabs use an inline switcher');
     assert(layout.inlineSwitcher.stack.get_pages().get_n_items() === 3, 'Inline switcher retains all native pages');
     assert(layout.inlineSwitcher.visible, 'Multiple preferences pages show the inline switcher');
@@ -24,9 +29,13 @@ try {
     layout.inlineSwitcher.stack.visible_child = pages[1];
     assert(window.visible_page === pages[1], 'Inline selection updates native visible_page');
     layout.viewStack.visible_child_name = 'details';
+    assert(layout.pendingBanner.revealed && layout.pendingBanner.get_root() === window, 'Pending banner remains visible on Details');
     assert(window.visible_page === pages[1], 'Details does not discard the selected preferences page');
     layout.viewStack.visible_child_name = 'preferences';
     assert(window.visible_page === pages[1] && pages[1].get_root() === window, 'Preferences returns to the same native page and root');
+    assert(layout.pendingBanner.revealed, 'Pending banner remains visible on Preferences');
+    layout.setPendingUpdate(false);
+    assert(!layout.pendingBanner.revealed, 'Non-pending extensions hide the banner');
     for (const page of pages.slice(1)) window.remove(page);
     assert(!layout.inlineSwitcher.visible, 'A single preferences page hides the redundant inline switcher');
     window.push_subpage(new Adw.NavigationPage({ title: 'Native Subpage', child: new Gtk.Label({ label: 'Subpage' }) }));

@@ -286,7 +286,7 @@ try {
     assert(list.get_row_at_index(0)?._catalogItem.uuid === 'page-1@test', 'Filtered middle page preserves existing results');
     assert(more.sensitive && more.get_parent().visible, 'Filtered middle page still allows Load More');
     more.emit('activated');
-    await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.page === '3',
+    await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.page === '3' && more.sensitive,
         'Next from a filtered empty page must reach the third page');
     assert(!more.get_parent().visible && list.get_row_at_index(1)?._catalogItem.uuid === 'page-3@test',
         'Last catalog page appends its row and hides Load More');

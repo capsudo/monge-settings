@@ -5,7 +5,7 @@ import { resourceBase } from './bootstrap.js';
 import { attachPreferencesHost } from './preferences-host.js';
 import { createInstalledView } from './installed-view.js';
 import { createBrowseView } from './browse-view.js';
-import { createExtensionPageLayout } from './extension-page.js';
+import { createExtensionPageLayout, createPendingUpdateBanner } from './extension-page.js';
 import { createExtensionDetails } from './extension-details.js';
 import { createCatalog } from './catalog.js';
 const { extensionManager } = await import(`${resourceBase}/extensionsService.js`);
@@ -30,6 +30,7 @@ export class ExtensionsController {
         attachPreferencesHost(window, native);
         this.ready = window.ready;
         this.pageLayout = createExtensionPageLayout(native);
+        this.connectPendingUpdateBanner(this.pageLayout.pendingBanner, () => this.current?.informationItem?.uuid);
         this.pageLayout.viewStack.connect('notify::visible-child-name', () => {
             const view = this.pageLayout.viewStack.visible_child_name;
             if (!this._configuringPage && this.current?.informationItem?.hasPrefs) this.viewState.set(view);
@@ -68,6 +69,20 @@ export class ExtensionsController {
 
     report(error) {
         if (!this.closed) this.window.add_toast(new Adw.Toast({ title: error.message }));
+    }
+
+    hasPendingUpdate(uuid) {
+        return this.backend.extensions.some(item => item.uuid === uuid && item.type === 2 && item.hasUpdate === true);
+    }
+
+    connectPendingUpdateBanner(banner, getUuid) {
+        let busy = false;
+        banner.connect('button-clicked', async () => {
+            if (busy || !banner.revealed || !this.hasPendingUpdate(getUuid()) || this.closed || this.closing) return;
+            busy = true;
+            try { await this.backend.requestLogout(); } catch (error) { this.report(error); }
+            finally { busy = false; }
+        });
     }
 
     panelChanged() {
@@ -129,10 +144,12 @@ export class ExtensionsController {
             if (current.informationItem) {
                 const item = this.backend.extensions.find(value => value.uuid === current.informationItem.uuid);
                 if (item) { current.informationItem = item; current.detailsView.update(item); }
+                this.pageLayout.setPendingUpdate(this.hasPendingUpdate(current.informationItem.uuid));
             }
             if (current.catalogItem) {
                 const item = this.backend.extensions.find(value => value.uuid === current.catalogItem.uuid);
                 current.catalogDetailsView?.update(item ?? current.catalogItem, Boolean(item));
+                current.catalogPendingBanner.revealed = this.hasPendingUpdate(current.catalogItem.uuid);
             }
         });
         viewStack.connect('notify::visible-child-name', () => {
@@ -154,15 +171,21 @@ export class ExtensionsController {
                 try { return await this.backend.install(uuid); }
                 catch (error) { this.report(error); throw error; }
             }, canInstall: () => this.backend.canInstall === true });
-        const toolbar = new Adw.ToolbarView({ content: view.widget }); toolbar.add_top_bar(new Adw.HeaderBar());
+        const pendingBanner = createPendingUpdateBanner(); pendingBanner.revealed = this.hasPendingUpdate(item.uuid);
+        this.connectPendingUpdateBanner(pendingBanner, () => this.current?.catalogPendingBanner === pendingBanner ? this.current.catalogItem?.uuid : null);
+        const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true });
+        content.append(pendingBanner); content.append(view.widget);
+        const toolbar = new Adw.ToolbarView({ content }); toolbar.add_top_bar(new Adw.HeaderBar());
         const details = new Adw.NavigationPage({ title: item.name, child: toolbar });
-        current.catalogItem = item; current.catalogDetailsView = view;
+        current.catalogItem = item; current.catalogDetailsView = view; current.catalogPendingBanner = pendingBanner;
         current.details = details; current.navigation.push(details); view.start();
     }
 
     clearCatalogDetails() {
         if (!this.current) return;
         this.current.catalogDetailsView?.stop();
+        if (this.current.catalogPendingBanner) this.current.catalogPendingBanner.revealed = false;
+        this.current.catalogPendingBanner = null;
         this.current.catalogDetailsView = null; this.current.catalogItem = null;
     }
 
@@ -239,6 +262,7 @@ export class ExtensionsController {
         this.pageLayout.details.append(current.detailsView.widget);
         current.information = current.detailsView.information;
         current.informationItem = item;
+        this.pageLayout.setPendingUpdate(this.hasPendingUpdate(item.uuid));
         const view = item.hasPrefs ? this.viewState.get() : 'details';
         this._configuringPage = true;
         try {
@@ -261,6 +285,7 @@ export class ExtensionsController {
         current.detailsView = null;
         current.information = null;
         current.informationItem = null;
+        this.pageLayout.setPendingUpdate(false);
     }
 
     stopPanel() {
