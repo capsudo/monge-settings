@@ -17,6 +17,13 @@ for (const page of pages) {
 window.present(); await tick();
 try {
     assert(layout.switcher instanceof Adw.ViewSwitcher, 'Details/Preferences use the header view switcher');
+    assert(layout.header.title_widget instanceof Adw.WindowTitle, 'Extension header shows a name and UUID above the switchers');
+    layout.setExtension({ name: 'Example Extension', uuid: 'example@monge.test' });
+    assert(layout.header.title_widget.title === 'Example Extension' && layout.header.title_widget.subtitle === 'example@monge.test',
+        'Extension identity uses literal name and UUID');
+    assert(!layout.switcher.is_ancestor(layout.viewStack) && !layout.inlineSwitcher.is_ancestor(layout.preferences),
+        'Both switchers stay in the fixed header, outside scrolling page content');
+    assert(layout.preferences.get_first_child() === layout.originalContent, 'Native preferences content has no extra Preferences heading');
     assert(layout.pendingBanner instanceof Adw.Banner && !layout.pendingBanner.revealed,
         'Extension page owns an initially hidden pending-update banner');
     layout.setPendingUpdate(true);
@@ -24,11 +31,12 @@ try {
         layout.pendingBanner.get_parent() === layout.viewStack.get_parent(), 'Pending banner sits above both tabs, outside their content');
     assert(layout.inlineSwitcher instanceof Adw.InlineViewSwitcher, 'Native page tabs use an inline switcher');
     assert(layout.inlineSwitcher.stack.get_pages().get_n_items() === 3, 'Inline switcher retains all native pages');
-    assert(layout.inlineSwitcher.visible, 'Multiple preferences pages show the inline switcher');
     layout.viewStack.visible_child_name = 'preferences';
+    assert(layout.inlineSwitcher.visible, 'Multiple preferences pages show the inline switcher on Preferences');
     layout.inlineSwitcher.stack.visible_child = pages[1];
     assert(window.visible_page === pages[1], 'Inline selection updates native visible_page');
     layout.viewStack.visible_child_name = 'details';
+    assert(!layout.inlineSwitcher.visible, 'Details hides the extension preferences sub-switcher');
     assert(layout.pendingBanner.revealed && layout.pendingBanner.get_root() === window, 'Pending banner remains visible on Details');
     assert(window.visible_page === pages[1], 'Details does not discard the selected preferences page');
     layout.viewStack.visible_child_name = 'preferences';
@@ -41,6 +49,7 @@ try {
     window.push_subpage(new Adw.NavigationPage({ title: 'Native Subpage', child: new Gtk.Label({ label: 'Subpage' }) }));
     assert(window.pop_subpage(), 'Native preferences subpages still work');
     layout.setHasPreferences(false);
+    assert(layout.header.title_widget.subtitle === 'example@monge.test', 'Details-only extensions retain the identity header');
     assert(layout.viewStack.visible_child_name === 'details', 'No-preferences extensions show Details');
     assert(!layout.viewStack.get_page(layout.preferences).visible, 'No-preferences extensions hide the Preferences tab');
     print('PASS extension page: two-level navigation, native pages, single-page hiding and subpages');

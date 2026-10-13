@@ -177,7 +177,8 @@ export class ExtensionsController {
         this.connectPendingUpdateBanner(pendingBanner, () => this.current?.catalogPendingBanner === pendingBanner ? this.current.catalogItem?.uuid : null);
         const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true });
         content.append(pendingBanner); content.append(view.widget);
-        const toolbar = new Adw.ToolbarView({ content }); toolbar.add_top_bar(new Adw.HeaderBar());
+        const toolbar = new Adw.ToolbarView({ content });
+        toolbar.add_top_bar(new Adw.HeaderBar({ title_widget: new Adw.WindowTitle({ title: item.name, subtitle: item.uuid }) }));
         const details = new Adw.NavigationPage({ title: item.name, child: toolbar });
         current.catalogItem = item; current.catalogDetailsView = view; current.catalogPendingBanner = pendingBanner;
         current.details = details; current.navigation.push(details); view.start();
@@ -274,6 +275,7 @@ export class ExtensionsController {
         this.pageLayout.details.append(current.detailsView.widget);
         current.information = current.detailsView.information;
         current.informationItem = item;
+        this.pageLayout.setExtension(item);
         this.pageLayout.setPendingUpdate(this.hasPendingUpdate(item.uuid));
         const view = item.hasPrefs ? this.viewState.get() : 'details';
         this._configuringPage = true;
@@ -297,6 +299,7 @@ export class ExtensionsController {
         current.detailsView = null;
         current.information = null;
         current.informationItem = null;
+        this.pageLayout.setExtension(null);
         this.pageLayout.setPendingUpdate(false);
     }
 

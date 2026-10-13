@@ -28,13 +28,9 @@ export function createExtensionPageLayout(native) {
     const viewStack = new Adw.ViewStack({ vexpand: true });
     const details = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true });
     const preferences = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true });
-    const heading = new Gtk.Label({ label: 'Preferences', margin_top: 24, margin_bottom: 12 });
-    heading.add_css_class('title-1');
     const inlineSwitcher = new Adw.InlineViewSwitcher({ stack: nativeSwitcher.stack,
         display_mode: Adw.InlineViewSwitcherDisplayMode.LABELS, can_shrink: true,
         halign: Gtk.Align.CENTER, margin_start: 12, margin_end: 12, margin_bottom: 12 });
-    preferences.append(heading);
-    preferences.append(inlineSwitcher);
     toolbar.content = null;
     preferences.append(originalContent);
     viewStack.add_titled_with_icon(details, 'details', 'Details', 'dialog-information-symbolic');
@@ -43,8 +39,13 @@ export function createExtensionPageLayout(native) {
     const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true });
     content.append(pendingBanner); content.append(viewStack);
     toolbar.content = content;
-    const switcher = new Adw.ViewSwitcher({ stack: viewStack, policy: Adw.ViewSwitcherPolicy.WIDE });
-    header.title_widget = switcher;
+    const title = new Adw.WindowTitle();
+    header.title_widget = title;
+    const switcher = new Adw.ViewSwitcher({ stack: viewStack, policy: Adw.ViewSwitcherPolicy.WIDE,
+        halign: Gtk.Align.CENTER, margin_top: 6, margin_bottom: 12 });
+    const navigation = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    navigation.append(switcher); navigation.append(inlineSwitcher);
+    toolbar.add_top_bar(navigation);
     const pages = nativeSwitcher.stack.get_pages();
     const watched = new Map();
     const sync = () => {
@@ -59,23 +60,25 @@ export function createExtensionPageLayout(native) {
         for (const [page, signal] of watched) {
             if (!present.has(page)) { page.disconnect(signal); watched.delete(page); }
         }
-        inlineSwitcher.visible = visible > 1;
+        inlineSwitcher.visible = visible > 1 && viewStack.visible_child_name === 'preferences';
     };
     const pagesSignal = pages.connect('items-changed', sync);
+    const viewSignal = viewStack.connect('notify::visible-child-name', sync);
     sync();
     return {
         header, viewStack, switcher, inlineSwitcher, details, preferences, pendingBanner,
         originalTitle, originalContent,
         stop() {
             pages.disconnect(pagesSignal);
+            viewStack.disconnect(viewSignal);
             for (const [page, signal] of watched) page.disconnect(signal);
             watched.clear();
         },
+        setExtension(item) { title.title = item?.name ?? ''; title.subtitle = item?.uuid ?? ''; },
         setPendingUpdate(value) { pendingBanner.revealed = value === true; },
         setHasPreferences(value) {
             viewStack.get_page(preferences).visible = value;
             switcher.visible = value;
-            header.title_widget = value ? switcher : originalTitle;
             if (!value) viewStack.visible_child_name = 'details';
         },
     };

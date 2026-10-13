@@ -155,6 +155,14 @@ export async function run(controller) {
             'Browse reuses the rich Details component with screenshot and reviews');
         check(controller.current.catalogDetailsView.action.label === 'Install…' && controller.current.catalogDetailsView.action.sensitive,
             'uninstalled compatible catalog details expose Install');
+        const findHeader = widget => {
+            if (widget instanceof Adw.HeaderBar) return widget;
+            for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) { const found = findHeader(child); if (found) return found; }
+            return null;
+        };
+        const catalogHeader = findHeader(controller.current.details);
+        check(catalogHeader?.title_widget instanceof Adw.WindowTitle &&
+            catalogHeader.title_widget.subtitle === 'catalog@monge.test', 'catalog Details header includes the extension UUID');
         await stable(window); snapshot(window, 'catalog-details');
         const screenshotDetails = controller.current.catalogDetailsView;
         const inlinePreview = screenshotDetails.preview;
@@ -232,6 +240,23 @@ export async function run(controller) {
         check(controller.pageLayout.inlineSwitcher instanceof Adw.InlineViewSwitcher &&
             controller.pageLayout.inlineSwitcher.stack.get_pages().get_n_items() === 3,
             'Layout, Colors and Profiles use the native inline switcher');
+        await stable(window);
+        const extensionHeader = controller.pageLayout.header.title_widget;
+        check(extensionHeader instanceof Adw.WindowTitle && extensionHeader.title === 'Example Extension' &&
+            extensionHeader.subtitle === 'modern@monge.test', 'extension header displays name above UUID');
+        const headerBounds = widget => {
+            const [valid, bounds] = widget.compute_bounds(window);
+            check(valid, 'extension header widget has native bounds'); return bounds;
+        };
+        const identityBounds = headerBounds(extensionHeader);
+        const outerBounds = headerBounds(controller.pageLayout.switcher);
+        const inlineBounds = headerBounds(controller.pageLayout.inlineSwitcher);
+        check(identityBounds.get_y() + identityBounds.get_height() <= outerBounds.get_y() &&
+            outerBounds.get_y() + outerBounds.get_height() <= inlineBounds.get_y(),
+            'fixed extension header orders identity, Details/Preferences and native preferences tabs');
+        check(controller.pageLayout.preferences.get_first_child() === controller.pageLayout.originalContent,
+            'preferences body is unchanged without the extra Preferences heading');
+        snapshot(window, 'preferences-header');
         controller.pageLayout.inlineSwitcher.stack.visible_child_name = 'colors';
         const selectedPage = window.visible_page;
         controller.pageLayout.viewStack.visible_child_name = 'details';
@@ -244,6 +269,18 @@ export async function run(controller) {
         check(controller.current.detailsView.preview.get_allocated_height() > 0,
             'the decoded screenshot occupies visible space instead of collapsing in the scrolling page');
         snapshot(window, 'details');
+        const headerBeforeScroll = headerBounds(extensionHeader).get_y();
+        const tabsBeforeScroll = headerBounds(controller.pageLayout.switcher).get_y();
+        const detailsAdjustment = controller.current.detailsView.widget.get_vadjustment();
+        detailsAdjustment.value = detailsAdjustment.upper - detailsAdjustment.page_size;
+        await delay(100);
+        check(detailsAdjustment.value > 0 && extensionHeader.get_mapped() &&
+            headerBounds(extensionHeader).get_y() === headerBeforeScroll &&
+            headerBounds(controller.pageLayout.switcher).get_y() === tabsBeforeScroll,
+            'extension identity and view switcher remain visible while Details scrolls');
+        check(!controller.pageLayout.inlineSwitcher.visible, 'Details hides the native preferences sub-switcher');
+        snapshot(window, 'details-header-scrolled');
+        detailsAdjustment.value = 0;
         controller.pageLayout.viewStack.visible_child_name = 'preferences';
         check(window.visible_page === selectedPage && window.get_surface() === surface,
             'Preferences selection returns to the same native page and surface');
