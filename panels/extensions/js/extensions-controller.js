@@ -79,9 +79,30 @@ export class ExtensionsController {
         const navigation = panel.get_child();
         const landing = navigation.get_visible_page();
         const viewStack = new Adw.ViewStack({ vexpand: true });
+        const updatesBanner = new Adw.Banner({ revealed: false, button_style: Adw.BannerButtonStyle.SUGGESTED });
+        let installedPage = null; let updateCounts = { available: 0, pending: 0 }; let logoutBusy = false;
+        const refreshUpdateBanner = () => {
+            const { pending, available } = updateCounts;
+            if (installedPage) {
+                installedPage.badge_number = pending + available;
+                installedPage.needs_attention = pending + available > 0;
+            }
+            updatesBanner.title = pending ? `${pending} extension${pending === 1 ? '' : 's'} will be updated on next login` :
+                `${available} extension update${available === 1 ? '' : 's'} available`;
+            updatesBanner.button_label = pending ? 'Log Out…' : '';
+            updatesBanner.revealed = pending + available > 0 && viewStack.visible_child_name === 'installed';
+        };
+        updatesBanner.connect('button-clicked', async () => {
+            if (logoutBusy || !updatesBanner.revealed || !updateCounts.pending || this.closed || this.closing) return;
+            logoutBusy = true;
+            try { await this.backend.requestLogout(); } catch (error) { this.report(error); }
+            finally { logoutBusy = false; }
+        });
         const installed = createInstalledView({ backend: this.backend, catalog: this.catalog, iconCache: this.iconCache,
+            onUpdatesChanged: counts => { updateCounts = counts; refreshUpdateBanner(); },
             onPreferences: uuid => this.select(uuid).catch(error => this.report(error)), onError: error => this.report(error) });
         viewStack.add_titled_with_icon(installed.widget, 'installed', 'Installed', 'application-x-addon-symbolic');
+        installedPage = viewStack.get_page(installed.widget); refreshUpdateBanner();
         const browse = createBrowseView({ shellVersion: this.backend.shellVersion,
             installedUuids: this.backend.extensions.map(item => item.uuid),
             ...(this.catalog ? { catalog: this.catalog } : {}),
@@ -90,12 +111,14 @@ export class ExtensionsController {
             onDetails: item => this.showDetails(item) });
         viewStack.add_titled_with_icon(browse.widget, 'browse', 'Browse', 'globe-alt2-symbolic');
         const header = new Adw.HeaderBar({ title_widget: new Adw.ViewSwitcher({ stack: viewStack, policy: Adw.ViewSwitcherPolicy.WIDE }) });
-        const toolbar = new Adw.ToolbarView({ content: viewStack }); toolbar.add_top_bar(header);
+        const landingContent = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, vexpand: true });
+        landingContent.append(updatesBanner); landingContent.append(viewStack);
+        const toolbar = new Adw.ToolbarView({ content: landingContent }); toolbar.add_top_bar(header);
         landing.set_child(toolbar);
         const preferencesPage = new Adw.NavigationPage({ title: 'Extension Preferences', tag: 'extension-preferences', can_pop: false,
             child: this.window.monge_preferences_content });
         navigation.add(preferencesPage);
-        this.current = { panel, navigation, landing, preferencesPage, viewStack, installed, browse, details: null };
+        this.current = { panel, navigation, landing, preferencesPage, viewStack, installed, browse, updatesBanner, details: null };
         navigation.connect('popped', (_navigation, page) => {
             if (this.current?.navigation === navigation && page === this.current.details) this.clearCatalogDetails();
         });
@@ -114,6 +137,7 @@ export class ExtensionsController {
         });
         viewStack.connect('notify::visible-child-name', () => {
             if (this.current?.viewStack !== viewStack) return;
+            refreshUpdateBanner();
             if (viewStack.visible_child_name === 'browse') browse.start(); else browse.stop();
         });
         this.window.title = 'Settings';

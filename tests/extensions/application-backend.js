@@ -32,6 +32,7 @@ export async function createBackend() {
     let enabled = true;
     const extensions = [
         { uuid: 'modern@monge.test', name: 'Example Extension', description: 'Modern native preferences fixture.', type: 2,
+            hasUpdate: true,
             state: 1, enabled: true, canChange: true, hasPrefs: true, version: 1, url: 'https://example.org/', path: `${fixtureRoot}/modern@monge.test` },
         { uuid: 'legacy@monge.test', name: 'System Example', description: 'Legacy native preferences fixture.', type: 1,
             state: 2, enabled: false, canChange: true, hasPrefs: true, version: 1, path: `${fixtureRoot}/legacy@monge.test` },
@@ -42,6 +43,7 @@ export async function createBackend() {
     return {
         extensions, shellVersion: '49.4', writable: true, calls: [],
         canInstall: true,
+        async requestLogout() { this.calls.push(['logout', 0]); },
         async install(uuid) {
             this.calls.push(['install', uuid]);
             const item = { uuid, name: 'Catalog Example', description: 'Installed catalog fixture.', type: 2,

@@ -3,12 +3,20 @@ import GLib from 'gi://GLib';
 const loop = new GLib.MainLoop(null, false);
 const assert = (value, message) => { if (!value) throw new Error(message); };
 let exported;
+let sessionExport;
+const sessionOwner = Gio.bus_own_name(Gio.BusType.SESSION, 'org.gnome.SessionManager', Gio.BusNameOwnerFlags.NONE,
+    connection => {
+        sessionExport = Gio.DBusExportedObject.wrapJSObject('<node><interface name="org.gnome.SessionManager"><method name="Logout"><arg type="u" direction="in"/></method></interface></node>',
+            { Logout(mode) { calls.push(['logout', mode]); } });
+        sessionExport.export(connection, '/org/gnome/SessionManager');
+    }, null, null);
 let calls = [];
 let globalEnabled = true;
 let data = {
     'user@example': { uuid: new GLib.Variant('s', 'user@example'), name: new GLib.Variant('s', 'User'),
         type: new GLib.Variant('d', 2), state: new GLib.Variant('d', 2),
         enabled: new GLib.Variant('b', true), hasPrefs: new GLib.Variant('b', true),
+        hasUpdate: new GLib.Variant('b', true),
         path: new GLib.Variant('s', '/fixture/user') },
     'system@example': { uuid: new GLib.Variant('s', 'system@example'), name: new GLib.Variant('s', 'System'),
         type: new GLib.Variant('d', 1), state: new GLib.Variant('d', 1),
@@ -45,6 +53,8 @@ const owner = Gio.bus_own_name(Gio.BusType.SESSION, 'org.monge.Settings.BackendF
             assert(calls.length === 0, 'startup must not change extensions');
             assert(backend.extensions.length === 2, 'all installed types retained');
             assert(backend.extensions.find(x => x.uuid === 'user@example').enabled, 'requested enabled survives inactive state');
+            assert(backend.extensions.find(x => x.uuid === 'user@example').hasUpdate === true,
+                'Shell staged-update flags are retained as booleans');
             assert(backend.extensions.find(x => x.uuid === 'system@example').type === 1, 'system type');
             let notifications = 0;
             const unsubscribe = backend.subscribe(() => notifications++);
@@ -61,6 +71,8 @@ const owner = Gio.bus_own_name(Gio.BusType.SESSION, 'org.monge.Settings.BackendF
             await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 40, () => { resolve(); return GLib.SOURCE_REMOVE; }));
             assert(backend.extensions.find(x => x.uuid === 'system@example').name === 'Updated', 'live metadata reflected');
             assert(notifications > 0, 'subscriptions notified');
+            await backend.requestLogout();
+            assert(calls.some(([method, mode]) => method === 'logout' && mode === 0), 'Logout uses the native confirmation mode on the private session service');
             const installed = await backend.install('catalog@example');
             assert(installed.uuid === 'catalog@example' && backend.extensions.some(item => item.uuid === installed.uuid),
                 'Installation is successful only after exact installed-state read-back');
@@ -90,7 +102,7 @@ const owner = Gio.bus_own_name(Gio.BusType.SESSION, 'org.monge.Settings.BackendF
             assert(closed, 'Stopped backends reject late installation results instead of claiming success');
             print('PASS backend: real private D-Bus reads, writes, rejection, live metadata and teardown');
         } catch (error) { logError(error); globalThis.failed = true; }
-        finally { exported.unexport(); Gio.bus_unown_name(owner); loop.quit(); }
+        finally { exported.unexport(); sessionExport?.unexport(); Gio.bus_unown_name(sessionOwner); Gio.bus_unown_name(owner); loop.quit(); }
     }, null);
 loop.run();
 if (globalThis.failed)

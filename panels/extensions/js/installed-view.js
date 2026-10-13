@@ -7,6 +7,7 @@ import { decodeExtensionImage } from './extension-image.js';
 
 const stateTitles = new Map([[1, 'Enabled'], [2, 'Disabled'], [3, 'Error'],
     [4, 'Out of Date'], [5, 'Downloading'], [6, 'Initialized'], [99, 'Uninstalled']]);
+const versionsByIconCache = new WeakMap();
 function safeWebsite(url) {
     if (typeof url !== 'string' || /[\x00-\x20\x7f\\]/.test(url)) return null;
     try {
@@ -44,7 +45,9 @@ export function createExtensionInfo(item) {
     return { widget, update };
 }
 
-export function createInstalledView({ backend, catalog, iconCache = new Map(), onPreferences = () => {}, onError = () => {} }) {
+export function createInstalledView({ backend, catalog, iconCache = new Map(), onPreferences = () => {}, onError = () => {}, onUpdatesChanged = () => {} }) {
+    if (!versionsByIconCache.has(iconCache)) versionsByIconCache.set(iconCache, new Map());
+    const versions = versionsByIconCache.get(iconCache);
     const widget = new Adw.PreferencesPage();
     const globalGroup = new Adw.PreferencesGroup();
     const globalSwitch = new Adw.SwitchRow({ title: 'Use Extensions',
@@ -68,11 +71,14 @@ export function createInstalledView({ backend, catalog, iconCache = new Map(), o
             if (image) row._icon.paintable = image;
             return;
         }
-        if (!catalog?.details || !catalog?.media) return;
+        if (!catalog?.details) return;
         try {
             const details = await catalog.details({ uuid, cancellable: iconCancellation });
             if (stopped || rows.get(uuid) !== row) return;
+            versions.set(uuid, Number.isSafeInteger(details.version) && details.version > 0 ? details.version : null);
+            updateIndicators();
             if (!details.icon || details.icon === '/static/images/plugin.png') { iconCache.set(uuid, null); return; }
+            if (!catalog.media) return;
             const bytes = await catalog.media({ path: details.icon, cancellable: iconCancellation });
             if (stopped || rows.get(uuid) !== row) return;
             const image = decodeExtensionImage(bytes, 32);
@@ -80,6 +86,29 @@ export function createInstalledView({ backend, catalog, iconCache = new Map(), o
         } catch (_error) {}
     }
 
+    function updateState(item) {
+        if (item.type !== 2) return null;
+        if (item.hasUpdate === true) return 'pending';
+        const latest = versions.get(item.uuid);
+        return Number.isSafeInteger(item.version) && item.version > 0 && latest != null && latest > item.version ? 'available' : null;
+    }
+    function updateCounts() {
+        const counts = { available: 0, pending: 0 };
+        for (const row of rows.values()) { const state = updateState(row._item); if (state) counts[state]++; }
+        return counts;
+    }
+    function updateIndicators() {
+        if (stopped) return;
+        for (const row of rows.values()) {
+            const state = updateState(row._item);
+            row._update.visible = Boolean(state);
+            row._update.tooltip_text = state === 'pending' ? 'This extension will be updated on next login' :
+                state === 'available' ? `Update available: v${versions.get(row._item.uuid)}` : null;
+            row._update.remove_css_class('warning'); row._update.remove_css_class('accent');
+            if (state) row._update.add_css_class('accent');
+        }
+        onUpdatesChanged(updateCounts());
+    }
     function syncControls() {
         syncing = true;
         if (!globalBusy) globalSwitch.active = backend.userExtensionsEnabled;
@@ -111,6 +140,7 @@ export function createInstalledView({ backend, catalog, iconCache = new Map(), o
         row._icon.add_css_class('lowres-icon'); row.add_prefix(row._icon);
         row._busy = false;
         row._toggle = new Gtk.Switch({ name: 'installed-enable', active: item.enabled, valign: Gtk.Align.CENTER });
+        row._update = new Gtk.Image({ icon_name: 'software-update-available-symbolic', visible: false, valign: Gtk.Align.CENTER, margin_end: 18 });
         row._preferences = new Gtk.Image({ icon_name: 'go-next-symbolic',
             accessible_role: Gtk.AccessibleRole.PRESENTATION, valign: Gtk.Align.CENTER, margin_start: 9, margin_end: 9 });
         row.connect('activated', () => {
@@ -118,6 +148,7 @@ export function createInstalledView({ backend, catalog, iconCache = new Map(), o
         });
         // ExpanderRow prepends suffixes; insert the switch first to display arrow, switch, native chevron.
         // ActionRow appends suffixes instead, placing the navigation arrow after the switch.
+        row.add_suffix(row._update);
         row.add_suffix(row._toggle);
         row.add_suffix(row._preferences);
         row._toggle.connect('notify::active', async () => {
@@ -155,11 +186,13 @@ export function createInstalledView({ backend, catalog, iconCache = new Map(), o
         }
         userGroup.description = items.some(item => item.type !== 1) ? '' : 'No user-installed extensions';
         systemGroup.visible = items.some(item => item.type === 1);
+        updateIndicators();
         syncControls();
     }
     render();
     const unsubscribe = backend.subscribe(render);
     return { widget, rows, globalSwitch, userGroup, systemGroup,
+        get updateCounts() { return updateCounts(); },
         whenIconsReady() { return Promise.all([...rows.values()].map(row => row._iconPromise)); },
         stop() {
             if (stopped) return;

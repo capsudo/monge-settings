@@ -89,8 +89,31 @@ test('retired icon loads are cancelled and cannot overwrite the fallback', async
         'Stopping the view cancels requests and ignores escaped replies');
 });
 
+test('available updates stay distinct from Shell-staged next-login updates', async () => {
+    const backend = createFixtureBackend([
+        extension({ uuid: 'available@test', version: 1 }), extension({ uuid: 'pending@test', version: 1, hasUpdate: true }),
+        extension({ uuid: 'current@test', version: 3 }), extension({ uuid: 'system@test', type: 1, version: 1 }),
+    ]);
+    const changes = [];
+    const view = createInstalledView({ backend, catalog: { details: async () => ({ version: 3 }) },
+        onUpdatesChanged: counts => changes.push(counts) });
+    try {
+        await view.whenIconsReady();
+        equal(view.updateCounts, { available: 1, pending: 1 }, 'Only newer user extensions are available, and staged updates are separate');
+        assert(view.rows.get('available@test')._update.tooltip_text === 'Update available: v3' &&
+            view.rows.get('pending@test')._update.tooltip_text === 'This extension will be updated on next login', 'Row tooltips describe actual update states');
+        for (const uuid of ['available@test', 'pending@test'])
+            assert(view.rows.get(uuid)._update.has_css_class('accent') && !view.rows.get(uuid)._update.has_css_class('warning'),
+                'Both update states use GNOME accent blue instead of warning orange');
+        assert(!view.rows.get('current@test')._update.visible && !view.rows.get('system@test')._update.visible, 'Current and system-packaged entries have no EGO update indicator');
+        backend.extensions = backend.extensions.map(item => ({ ...item, hasUpdate: false, version: 3 })); backend.notify();
+        equal(view.updateCounts, { available: 0, pending: 0 }, 'Applied updates clear indicators and counts from live metadata');
+        assert(changes.length > 0 && backend.calls.length === 0, 'Status checking performs no settings writes or update downloads');
+    } finally { view.stop(); }
+});
+
 test('switch and arrow positions match Color Management', async () => {
-    const view = createInstalledView({ backend: createFixtureBackend([extension()]) });
+    const view = createInstalledView({ backend: createFixtureBackend([extension({ hasUpdate: true })]) });
     const reference = new Adw.ActionRow({ title: 'Color Management reference' });
     const referenceSwitch = new Gtk.Switch({ valign: Gtk.Align.CENTER });
     const referenceButton = new Gtk.Button({ icon_name: 'pan-end-symbolic', valign: Gtk.Align.CENTER });
@@ -114,6 +137,10 @@ test('switch and arrow positions match Color Management', async () => {
         const actual = geometry(row, row._toggle, row._preferences);
         const expected = geometry(reference, referenceSwitch, referenceButton.get_child());
         equal(actual, expected, `Color Management positions: expected ${JSON.stringify(expected)}`);
+        const [, updateBounds] = row._update.compute_bounds(row);
+        const [, switchBounds] = row._toggle.compute_bounds(row);
+        assert(switchBounds.get_x() - updateBounds.get_x() - updateBounds.get_width() >= 24,
+            'Update indicator has at least 24 pixels of separation without moving the switch or arrow');
     } finally { view.stop(); window.destroy(); }
 });
 

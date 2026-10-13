@@ -2,19 +2,19 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 const unpack = value => value instanceof GLib.Variant ? value.recursiveUnpack() : value;
-const ownKeys = ['uuid', 'name', 'description', 'type', 'state', 'hasPrefs', 'enabled', 'canChange', 'error', 'version', 'url', 'path'];
+const ownKeys = ['uuid', 'name', 'description', 'type', 'state', 'hasPrefs', 'hasUpdate', 'enabled', 'canChange', 'error', 'version', 'url', 'path'];
 export function normalizeExtension(uuid, info) {
     const value = Object.fromEntries(ownKeys.map(key => [key, unpack(info[key])]));
     if (![1, 2].includes(value.type) || value.state === 99 || typeof value.path !== 'string' ||
         typeof value.name !== 'string' || !value.name || typeof uuid !== 'string' || !uuid)
         return null;
     return { ...value, uuid, description: typeof value.description === 'string' ? value.description : '',
-        hasPrefs: value.hasPrefs === true, enabled: value.enabled === true,
+        hasPrefs: value.hasPrefs === true, hasUpdate: value.hasUpdate === true, enabled: value.enabled === true,
         canChange: value.canChange !== false };
 }
 
-function call(connection, destination, interfaceName, method, parameters, resultType, timeoutMs = 10000) {
-    return new Promise((resolve, reject) => connection.call(destination, '/org/gnome/Shell', interfaceName,
+function call(connection, destination, interfaceName, method, parameters, resultType, timeoutMs = 10000, objectPath = '/org/gnome/Shell') {
+    return new Promise((resolve, reject) => connection.call(destination, objectPath, interfaceName,
         method, parameters, resultType, Gio.DBusCallFlags.NO_AUTO_START, timeoutMs, null, (_connection, result) => {
             try { resolve(connection.call_finish(result)); } catch (error) { reject(error); }
         }));
@@ -94,6 +94,11 @@ export async function createBackend({ destination = 'org.gnome.Shell', connectio
             const actual = entries.get(uuid);
             if (!actual || actual.enabled !== enabled)
                 throw new Error('GNOME Shell did not accept the extension setting');
+        },
+        async requestLogout() {
+            if (stopped) throw new Error('The extension backend was closed');
+            await call(connection, 'org.gnome.SessionManager', 'org.gnome.SessionManager', 'Logout',
+                new GLib.Variant('(u)', [0]), null, 10000, '/org/gnome/SessionManager');
         },
         async install(uuid) {
             if (typeof uuid !== 'string' || !uuid.length || uuid.length > 256 || /[\x00-\x1f]/.test(uuid))

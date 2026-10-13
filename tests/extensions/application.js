@@ -50,6 +50,14 @@ export async function run(controller) {
         check(controller.current.installed.rows.size === 3, 'user and system extension rows');
         const installedRow = controller.current.installed.rows.get('modern@monge.test');
         await controller.current.installed.whenIconsReady();
+        check(controller.current.installed.updateCounts.pending === 1 && controller.current.installed.updateCounts.available === 1,
+            'pending updates and newer available versions are counted separately');
+        check(controller.current.updatesBanner.revealed && controller.current.updatesBanner.title === '1 extension will be updated on next login' &&
+            controller.current.viewStack.get_page(controller.current.installed.widget).badge_number === 2,
+            'Installed badge and next-login banner reflect real staged-update state');
+        controller.current.updatesBanner.emit('button-clicked'); await delay(10);
+        check(controller.backend.calls.some(([method, mode]) => method === 'logout' && mode === 0) && window.get_visible(),
+            'banner logout requests native confirmation only after explicit interaction');
         check(installedRow._icon.paintable?.get_width() === 32 && installedRow._icon.get_width() === 32,
             'installed extension custom icon is decoded and displayed at Apps size');
         check(controller.current.installed.rows.get('information@monge.test')._icon.icon_name === 'application-x-addon-symbolic',
@@ -74,7 +82,24 @@ export async function run(controller) {
         check(await controller.back(), 'Back after whole-row activation');
         await stable(window);
         snapshot(window, 'installed');
+        const modernUpdate = controller.backend.extensions.find(item => item.uuid === 'modern@monge.test');
+        const informationUpdate = controller.backend.extensions.find(item => item.uuid === 'information@monge.test');
+        const updateStyle = Adw.StyleManager.get_default(); const updateScheme = updateStyle.color_scheme;
+        updateStyle.color_scheme = Adw.ColorScheme.FORCE_DARK; await stable(window); snapshot(window, 'updates-next-login');
+        modernUpdate.hasUpdate = false; await controller.backend.refresh();
+        check(controller.current.updatesBanner.revealed && controller.current.updatesBanner.title === '2 extension updates available' &&
+            controller.current.updatesBanner.button_label === '', 'available-only banner does not claim updates are staged or offer logout');
+        const writesBeforeHiddenLogout = controller.backend.calls.length;
+        controller.current.updatesBanner.emit('button-clicked'); await delay(10);
+        check(controller.backend.calls.length === writesBeforeHiddenLogout, 'unstaged updates never request logout');
+        await stable(window); snapshot(window, 'updates-available');
+        modernUpdate.version = 31; informationUpdate.version = 31; await controller.backend.refresh();
+        check(!controller.current.updatesBanner.revealed && controller.current.viewStack.get_page(controller.current.installed.widget).badge_number === 0 &&
+            !controller.current.installed.rows.get('modern@monge.test')._update.visible, 'applied updates clear banner, badge and row indicators');
+        modernUpdate.version = 1; informationUpdate.version = 1; modernUpdate.hasUpdate = true; await controller.backend.refresh();
+        updateStyle.color_scheme = updateScheme; await stable(window);
         controller.current.viewStack.visible_child_name = 'browse';
+        check(!controller.current.updatesBanner.revealed, 'update banner is scoped to the Installed view');
         for (let attempt = 0; attempt < 100 && !controller.current.browse.widget.get_mapped(); attempt++) await delay(20);
         await delay(100);
         const findList = widget => {
