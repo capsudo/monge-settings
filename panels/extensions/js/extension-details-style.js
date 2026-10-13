@@ -11,7 +11,7 @@ export function ensureDetailsStyle() {
             background: transparent;
             border-radius: 0;
         }
-        .monge-details-metrics.split > list:last-child {
+        .monge-details-metrics > list.metric-separator {
             border-left: 1px solid var(--border-color);
         }
 

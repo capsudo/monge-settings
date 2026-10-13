@@ -57,6 +57,13 @@ server.add_handler('/comments/all/', (_server, message, _path, query) => {
 let detailsResponse = { ...item, downloads: 1234, url: 'https://example.org/',
     shell_version_map: { '49': { version: 31 }, '50': { version: 99 } },
     icon: '/extension-data/icons/example.png', screenshot: '/extension-data/screenshots/example.png' };
+let modesResponse = { extension: item.uuid, version: 31, session_modes: ['user', 'unlock-dialog'] };
+server.add_handler('/api/v1/extensions/', (_server, message, path) => {
+    requests.push({ path });
+    message.set_status(status, null);
+    message.set_response('application/json', Soup.MemoryUse.COPY,
+        new TextEncoder().encode(JSON.stringify(modesResponse)));
+});
 server.add_handler('/extension-info/', (_server, message, _path, query) => {
     requests.push({ ...query });
     message.set_status(status, null);
@@ -157,6 +164,17 @@ try {
     assert(details.version === 31, 'Version is the compatible catalog release, not an incompatible newer release');
     assert(details.screenshot === '/extension-data/screenshots/example.png', 'Details include the GNOME-hosted preview');
     assert(requests.at(-1).uuid === item.uuid, 'Details query matches the exact requested UUID');
+    assert((await catalog.sessionModes({ uuid: item.uuid, version: details.version })).join(',') === 'user,unlock-dialog',
+        'Catalog session modes come from the exact compatible release');
+    assert(requests.at(-1).path === '/api/v1/extensions/example@test/versions/31/', 'Session-mode lookup targets the exact UUID and version');
+    modesResponse = { ...modesResponse, extension: 'other@test' };
+    await expectFailure(() => catalog.sessionModes({ uuid: item.uuid, version: 31 }), 'Invalid extension session modes');
+    modesResponse = { ...modesResponse, extension: item.uuid, version: 99 };
+    await expectFailure(() => catalog.sessionModes({ uuid: item.uuid, version: 31 }), 'Invalid extension session modes');
+    modesResponse = { ...modesResponse, version: 31, session_modes: ['user', {}] };
+    await expectFailure(() => catalog.sessionModes({ uuid: item.uuid, version: 31 }), 'Invalid extension session modes');
+    await expectFailure(() => catalog.sessionModes({ uuid: '..', version: 31 }), 'query');
+    await expectFailure(() => catalog.sessionModes({ uuid: item.uuid, version: 0 }), 'query');
     detailsResponse = { ...detailsResponse, screenshot: '/extension-data/screenshots/example.gif' };
     assert((await catalog.details({ uuid: item.uuid })).screenshot === detailsResponse.screenshot,
         'GNOME-hosted GIF screenshots are retained instead of silently discarded');

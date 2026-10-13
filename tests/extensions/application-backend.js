@@ -16,6 +16,7 @@ export function createCatalog() {
         icon: uuid === 'modern@monge.test' ? '/extension-data/icons/example.png' : '/static/images/plugin.png',
         screenshot: '/extension-data/screenshots/example.png',
         website: 'https://extensions.gnome.org/extension/123/example/', homepage: 'https://example.org/' }),
+    sessionModes: async () => ['user', 'unlock-dialog'],
     media: async ({ path }) => {
         const image = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, true, 8,
             path.includes('/icons/') ? 32 : 320, path.includes('/icons/') ? 32 : 160);
@@ -32,7 +33,7 @@ export async function createBackend() {
     let enabled = true;
     const extensions = [
         { uuid: 'modern@monge.test', name: 'Example Extension', description: 'Modern native preferences fixture.', type: 2,
-            hasUpdate: true,
+            hasUpdate: true, sessionModes: ['user', 'unlock-dialog'],
             state: 1, enabled: true, canChange: true, hasPrefs: true, version: 1, url: 'https://example.org/', path: `${fixtureRoot}/modern@monge.test` },
         { uuid: 'legacy@monge.test', name: 'System Example', description: 'Legacy native preferences fixture.', type: 1,
             state: 2, enabled: false, canChange: true, hasPrefs: true, version: 1, path: `${fixtureRoot}/legacy@monge.test` },

@@ -2,7 +2,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 const unpack = value => value instanceof GLib.Variant ? value.recursiveUnpack() : value;
-const ownKeys = ['uuid', 'name', 'description', 'type', 'state', 'hasPrefs', 'hasUpdate', 'enabled', 'canChange', 'error', 'version', 'url', 'path'];
+const ownKeys = ['uuid', 'name', 'description', 'type', 'state', 'hasPrefs', 'hasUpdate', 'enabled', 'canChange', 'error', 'version', 'sessionModes', 'url', 'path'];
 export function normalizeExtension(uuid, info) {
     const value = Object.fromEntries(ownKeys.map(key => [key, unpack(info[key])]));
     if (![1, 2].includes(value.type) || value.state === 99 || typeof value.path !== 'string' ||

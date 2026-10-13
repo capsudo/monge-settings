@@ -296,7 +296,7 @@ export async function run(controller) {
         modern.version = 42;
         await controller.backend.refresh();
 
-        check(controller.current.detailsView.version.subtitle === 'Available: 31 Installed: 42',
+        check(controller.current.detailsView.version.subtitle === '42 (newer available: 31)',
             'different catalog and installed versions share one explicitly labelled value');
         const detailsView = controller.current.detailsView;
         check(detailsView.action instanceof Gtk.Button && detailsView.action.sensitive && detailsView.action.label === 'Remove…' &&
@@ -305,6 +305,8 @@ export async function run(controller) {
             !('localMetrics' in detailsView) && !('state' in detailsView) && !('installedVersion' in detailsView),
             'one statistics card has no Information heading or separate local-state/version rows');
         check(detailsView.version.title === 'Version', 'the combined version column is labelled Version');
+        check(detailsView.sessionModes.title === 'Session Modes' && detailsView.sessionModes.subtitle === 'Unlock Dialog' &&
+            detailsView.sessionModes.visible, 'Details shows the installed extension extra session modes');
         const versionImages = [];
         const collectImages = widget => {
             if (widget instanceof Gtk.Image) versionImages.push(widget);
@@ -313,6 +315,10 @@ export async function run(controller) {
         collectImages(detailsView.version);
         check(versionImages.some(image => image.icon_name === 'monge-hash-symbolic'), 'Version uses the custom hash icon without an exclamation mark');
         controller.pageLayout.viewStack.visible_child_name = 'details'; await stable(window);
+        check(detailsView.sessionModes.get_mapped() && detailsView.sessionModes.get_width() > 0 &&
+            detailsView.version.get_parent().has_css_class('metric-separator') &&
+            detailsView.sessionModes.get_parent().has_css_class('metric-separator'),
+            'three allocated statistics cells have separators before Version and Session Modes');
         const versionImage = versionImages.find(image => image.icon_name === 'monge-hash-symbolic');
         const iconSnapshot = new Gtk.Snapshot();
         new Gtk.WidgetPaintable({ widget: versionImage }).snapshot(iconSnapshot, 16, 16);

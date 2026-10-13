@@ -58,9 +58,12 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
     metrics.add_css_class('card'); metrics.add_css_class('monge-details-metrics');
     const downloads = new Adw.ActionRow({ title: 'Downloads', visible: false, use_markup: false });
     const version = new Adw.ActionRow({ title: 'Version', use_markup: false, subtitle_lines: 0 });
-    const metricLists = [downloads, version].map((row, index) => {
+    const sessionModes = new Adw.ActionRow({ title: 'Session Modes', visible: false, use_markup: false, subtitle_lines: 0 });
+    const metricRows = [downloads, version, sessionModes];
+    const metricIcons = ['folder-download-symbolic', 'monge-hash-symbolic', 'video-display-symbolic'];
+    const metricLists = metricRows.map((row, index) => {
         row.add_css_class('property');
-        row.add_prefix(new Gtk.Image({ icon_name: index === 0 ? 'folder-download-symbolic' : 'monge-hash-symbolic' }));
+        row.add_prefix(new Gtk.Image({ icon_name: metricIcons[index] }));
         const list = new Gtk.ListBox({ selection_mode: Gtk.SelectionMode.NONE });
         list.append(row); metrics.append(list); return list;
     });
@@ -121,20 +124,28 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
         const available = Number.isSafeInteger(online?.version) && online.version > 0 ? online.version : null;
         const localVersion = isInstalled && item.version != null ? String(item.version) : null;
         version.subtitle = available != null && localVersion != null && String(available) !== localVersion ?
-            `Available: ${available} Installed: ${localVersion}` : String(available ?? localVersion ?? '');
+            `${localVersion} (newer available: ${available})` : String(available ?? localVersion ?? '');
         version.visible = Boolean(version.subtitle);
         version.tooltip_text = available == null ? 'Installed version' : localVersion == null ? 'Latest compatible version' :
             'Available is the latest version compatible with this GNOME Shell';
+        const modes = isInstalled && Array.isArray(item.sessionModes) ? item.sessionModes : online?.sessionModes;
+        const modeLabels = { 'unlock-dialog': 'Unlock Dialog', gdm: 'GDM' };
+        sessionModes.subtitle = Array.isArray(modes) ? [...new Set(modes)]
+            .filter(mode => Object.hasOwn(modeLabels, mode)).map(mode => modeLabels[mode]).join(', ') : '';
+        sessionModes.visible = Boolean(sessionModes.subtitle);
         action.label = isInstalled ? 'Remove…' : installing ? 'Installing…' : 'Install…';
         action.sensitive = !installing && !removing && !stopped && (isInstalled ? Boolean(onRemove) && canRemove() :
             available != null && Boolean(onInstall) && canInstall());
         action.remove_css_class('destructive-action'); action.remove_css_class('suggested-action');
         action.add_css_class(isInstalled ? 'destructive-action' : 'suggested-action');
         action.tooltip_text = isInstalled && !canRemove() ? 'This extension cannot be removed from this account' : null;
-        metricLists[0].visible = downloads.visible;
-        metricLists[1].visible = version.visible;
-        metrics.visible = downloads.visible || version.visible;
-        if (downloads.visible && version.visible) metrics.add_css_class('split'); else metrics.remove_css_class('split');
+        let visibleMetrics = 0;
+        metricLists.forEach((list, index) => {
+            list.visible = metricRows[index].visible;
+            if (list.visible && visibleMetrics > 0) list.add_css_class('metric-separator'); else list.remove_css_class('metric-separator');
+            if (list.visible) visibleMetrics++;
+        });
+        metrics.visible = visibleMetrics > 0;
         updateLinks();
     }
     action.connect('clicked', async () => {
@@ -194,6 +205,15 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
             downloads.subtitle = result.downloads == null ? '' : result.downloads.toLocaleString('en-US');
             downloads.visible = Boolean(downloads.subtitle);
             update(item); status.label = '';
+            if ((!isInstalled || !Array.isArray(item.sessionModes)) && result.version != null && catalog.sessionModes) {
+                try {
+                    const modes = await catalog.sessionModes({ uuid: item.uuid, version: result.version, cancellable });
+                    if (stopped || request !== cancellable) return;
+                    online.sessionModes = modes; update(item);
+                } catch (_error) {
+                    if (stopped || request !== cancellable) return;
+                }
+            }
             for (const [path, apply] of [[result.icon, value => { icon.paintable = value; }],
                 [result.screenshot, value => {
                     preview.paintable = value;
@@ -224,7 +244,7 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
     }
     retry.connect('clicked', start);
     update(item);
-    return { widget, information, title, author, action, description, metrics, links, reviews, downloads, version, preview, expand, retry,
+    return { widget, information, title, author, action, description, metrics, links, reviews, downloads, version, sessionModes, preview, expand, retry,
         get imageDialog() { return imageDialog; },
         get removalDialog() { return removalDialog; },
         start, update, stop() { stopped = true; removalDialog?.force_close(); removalDialog = null; imageDialog?.force_close(); imageDialog = null;

@@ -5,7 +5,8 @@ import Gtk from 'gi://Gtk?version=4.0';
 Adw.init();
 const assert = (value, message) => { if (!value) throw new Error(message); };
 const { createExtensionDetails } = await import('../../panels/extensions/js/extension-details.js');
-const item = { uuid: 'example@test', name: '<b>Local name</b>', description: 'Local description', state: 1, version: 3, url: 'https://example.org/' };
+const item = { uuid: 'example@test', name: '<b>Local name</b>', description: 'Local description', state: 1, version: 3,
+    sessionModes: ['user', 'unlock-dialog'], url: 'https://example.org/' };
 let calls = 0;
 const view = createExtensionDetails({ item, catalog: { details: async ({ uuid }) => {
     calls++; assert(uuid === item.uuid, 'Fetch details for the exact extension UUID');
@@ -27,15 +28,21 @@ try {
         'Downloads and Version share a horizontal split card');
     assert(view.downloads.has_css_class('property') && view.version.has_css_class('property'),
         'Property rows emphasize values rather than their captions');
+    assert(view.sessionModes.title === 'Session Modes' && view.sessionModes.subtitle === 'Unlock Dialog' &&
+        view.sessionModes.visible && view.sessionModes.has_css_class('property'),
+        'The card shows extra supported session modes without the default User mode');
     await view.start();
     assert(view.author.label === 'By <b>Author</b>' && !view.author.use_markup, 'Online author remains literal');
     assert(view.description.label === 'Online description', 'Catalog supplies the full description');
     assert(view.downloads.subtitle === '1,234', 'Downloads are shown when supplied');
-    assert(view.version.subtitle === 'Available: 31 Installed: 3' && view.version.title === 'Version',
-        'Different versions share one Version cell with explicit Available and Installed labels');
+    assert(!view.downloads.get_parent().has_css_class('metric-separator') &&
+        view.version.get_parent().has_css_class('metric-separator') && view.sessionModes.get_parent().has_css_class('metric-separator'),
+        'Three visible cells have separators only between columns');
+    assert(view.version.subtitle === '3 (newer available: 31)' && view.version.title === 'Version',
+        'Different versions show the installed number with the available version in parentheses');
     await view.start(); assert(calls === 1, 'Returning to Details reuses its loaded content');
     view.update({ ...item, version: 42 });
-    assert(view.version.subtitle === 'Available: 31 Installed: 42',
+    assert(view.version.subtitle === '42 (newer available: 31)',
         'Installed metadata updates independently of catalog content');
     view.update({ ...item, version: 31 });
     assert(view.version.subtitle === '31', 'Matching versions appear once without redundant labels');
@@ -43,6 +50,12 @@ try {
     assert(view.version.subtitle === '31', 'Matching numeric and string metadata versions also appear once');
     view.update({ ...item, version: null });
     assert(view.version.subtitle === '31', 'Unknown installed versions are not invented');
+    view.update({ ...item, sessionModes: ['user', 'gdm', 'unlock-dialog', 'unlock-dialog', '<b>unknown</b>'] });
+    assert(view.sessionModes.subtitle === 'GDM, Unlock Dialog' && !view.sessionModes.use_markup,
+        'Known extra session modes are labelled once, in metadata order');
+    view.update({ ...item, sessionModes: ['user'] });
+    assert(!view.sessionModes.visible && !view.sessionModes.get_parent().visible,
+        'User-only extensions hide the entire Session Modes cell');
 } finally { view.stop(); }
 const offline = createExtensionDetails({ item, catalog: { details: async () => { throw new Error('offline'); } } });
 try {
@@ -51,7 +64,42 @@ try {
     assert(offline.retry.visible && !offline.downloads.visible, 'Offline mode offers retry without inventing download counts');
     assert(offline.version.subtitle === '3' && offline.version.visible && offline.version.tooltip_text === 'Installed version',
         'Offline Version retains known local metadata without claiming an available release');
+    assert(offline.sessionModes.subtitle === 'Unlock Dialog' && offline.sessionModes.visible && offline.metrics.visible,
+        'Offline Details retain installed session modes');
 } finally { offline.stop(); }
+let modeCalls = 0;
+const remoteModes = createExtensionDetails({ item, installed: false, catalog: {
+    details: async () => ({ version: 31 }),
+    sessionModes: async ({ uuid, version }) => {
+        modeCalls++; assert(uuid === item.uuid && version === 31, 'Remote session modes target the compatible release');
+        return ['user', 'unlock-dialog'];
+    },
+} });
+try {
+    await remoteModes.start();
+    assert(modeCalls === 1 && remoteModes.sessionModes.subtitle === 'Unlock Dialog' && remoteModes.sessionModes.visible,
+        'Browse Details fetch and show the compatible release session modes');
+    remoteModes.update({ ...item, sessionModes: ['user'] }, true);
+    assert(!remoteModes.sessionModes.visible, 'Installed session modes take precedence over the catalog release');
+} finally { remoteModes.stop(); }
+let finishModes;
+const pendingModes = createExtensionDetails({ item, installed: false, catalog: {
+    details: async () => ({ version: 31 }),
+    sessionModes: () => new Promise(resolve => { finishModes = resolve; }),
+} });
+const modesOperation = pendingModes.start();
+await Promise.resolve(); pendingModes.stop(); finishModes(['unlock-dialog']); await modesOperation;
+assert(!pendingModes.sessionModes.visible, 'Retired Details discard late session-mode replies');
+const unavailableModes = createExtensionDetails({ item, installed: false, catalog: {
+    details: async () => ({ version: 31, downloads: 1234 }),
+    sessionModes: async () => { throw new Error('unavailable'); },
+} });
+try {
+    await unavailableModes.start();
+    assert(unavailableModes.version.subtitle === '31' && unavailableModes.downloads.visible &&
+        !unavailableModes.sessionModes.visible && !unavailableModes.retry.visible,
+        'Unavailable session modes do not discard otherwise valid catalog details');
+} finally { unavailableModes.stop(); }
 Gtk.Settings.get_default().gtk_enable_animations = false;
 let removes = 0;
 const removable = createExtensionDetails({ item, canRemove: () => true, onRemove: async uuid => {

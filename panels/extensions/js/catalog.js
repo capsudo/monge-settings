@@ -167,6 +167,17 @@ export function createCatalog({ shellVersion, endpoint = 'https://extensions.gno
                     ? `https://extensions.gnome.org${data.link}` : null,
             };
         },
+        async sessionModes({ uuid, version, cancellable = null } = {}) {
+            if (typeof uuid !== 'string' || !uuid.length || uuid.length > 256 || /[\x00-\x1f]/.test(uuid) ||
+                uuid === '.' || uuid === '..' || !Number.isSafeInteger(version) || version < 1)
+                throw new Error('Invalid extension session modes query');
+            const bytes = await fetchBytes(`${base}api/v1/extensions/${encodeURIComponent(uuid)}/versions/${version}/`, cancellable);
+            const data = JSON.parse(new TextDecoder().decode(bytes));
+            if (!data || data.extension !== uuid || data.version !== version || !Array.isArray(data.session_modes) ||
+                data.session_modes.length > 32 || data.session_modes.some(mode => typeof mode !== 'string' || mode.length > 128))
+                throw new Error('Invalid extension session modes');
+            return data.session_modes;
+        },
         async media({ path, cancellable = null } = {}) {
             if (!mediaPath(path)) throw new Error('Invalid catalog media path');
             return fetchBytes(`${base.slice(0, -1)}${path}`, cancellable, 8 * 1024 * 1024);

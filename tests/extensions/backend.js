@@ -17,6 +17,7 @@ let data = {
         type: new GLib.Variant('d', 2), state: new GLib.Variant('d', 2),
         enabled: new GLib.Variant('b', true), hasPrefs: new GLib.Variant('b', true),
         hasUpdate: new GLib.Variant('b', true),
+        sessionModes: new GLib.Variant('as', ['user', 'unlock-dialog']),
         path: new GLib.Variant('s', '/fixture/user') },
     'system@example': { uuid: new GLib.Variant('s', 'system@example'), name: new GLib.Variant('s', 'System'),
         type: new GLib.Variant('d', 1), state: new GLib.Variant('d', 1),
@@ -68,6 +69,8 @@ const owner = Gio.bus_own_name(Gio.BusType.SESSION, 'org.monge.Settings.BackendF
             assert(backend.extensions.find(x => x.uuid === 'user@example').hasUpdate === true,
                 'Shell staged-update flags are retained as booleans');
             assert(backend.extensions.find(x => x.uuid === 'system@example').type === 1, 'system type');
+            assert(backend.extensions.find(x => x.uuid === 'user@example').sessionModes?.join(',') === 'user,unlock-dialog',
+                'Shell session-mode metadata survives D-Bus normalization');
             let notifications = 0;
             const unsubscribe = backend.subscribe(() => notifications++);
             await backend.setUserExtensionsEnabled(false);
