@@ -43,6 +43,12 @@ export async function createBackend() {
     return {
         extensions, shellVersion: '49.4', writable: true, calls: [],
         canInstall: true,
+        canRemove(uuid) { return extensions.some(item => item.uuid === uuid && item.type === 2); },
+        async remove(uuid) {
+            if (!this.canRemove(uuid)) throw new Error('Cannot remove this extension');
+            this.calls.push(['remove', uuid]);
+            extensions.splice(extensions.findIndex(item => item.uuid === uuid), 1); notify(); return true;
+        },
         async requestLogout() { this.calls.push(['logout', 0]); },
         async install(uuid) {
             this.calls.push(['install', uuid]);

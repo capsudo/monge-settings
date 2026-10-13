@@ -37,9 +37,11 @@ export async function createBackend({ destination = 'org.gnome.Shell', connectio
     const listeners = new Set();
     const entries = new Map();
     const installations = new Map();
+    const removals = new Map();
     let stopped = false;
     let revision = 0;
     let refreshTicket = 0;
+    let refreshing = null;
     const notify = () => { if (!stopped) for (const listener of listeners) listener(); };
     const backend = {
         get extensions() { return [...entries.values()]; },
@@ -47,23 +49,27 @@ export async function createBackend({ destination = 'org.gnome.Shell', connectio
         get writable() { return settings.is_writable('disable-user-extensions'); },
         get shellVersion() { return proxy.ShellVersion; },
         get canInstall() { return !stopped && settings.get_boolean('allow-extension-installation'); },
+        canRemove(uuid) { return !stopped && entries.get(uuid)?.type === 2; },
         subscribe(callback) { listeners.add(callback); return () => listeners.delete(callback); },
-        async refresh() {
+        refresh() {
             const ticket = ++refreshTicket;
             const before = revision;
-            const [listed] = await proxy.ListExtensionsAsync();
-            if (stopped || ticket !== refreshTicket)
-                return;
-            // a state signal received during the request is newer than its list snapshot; request a fresh snapshot instead.
-            if (before !== revision)
-                return backend.refresh();
-            entries.clear();
-            for (const [uuid, info] of Object.entries(listed)) {
-                const extension = normalizeExtension(uuid, info);
-                if (extension)
-                    entries.set(uuid, extension);
-            }
-            notify();
+            const operation = (async () => {
+                const [listed] = await proxy.ListExtensionsAsync();
+                if (stopped) return;
+                if (ticket !== refreshTicket) return refreshing;
+                // a state signal received during the request is newer than its list snapshot; request a fresh snapshot instead.
+                if (before !== revision)
+                    return backend.refresh();
+                entries.clear();
+                for (const [uuid, info] of Object.entries(listed)) {
+                    const extension = normalizeExtension(uuid, info);
+                    if (extension)
+                        entries.set(uuid, extension);
+                }
+                notify();
+            })();
+            refreshing = operation; return operation;
         },
         async getExtension(uuid) {
             const [info] = await proxy.GetExtensionInfoAsync(uuid);
@@ -94,6 +100,28 @@ export async function createBackend({ destination = 'org.gnome.Shell', connectio
             const actual = entries.get(uuid);
             if (!actual || actual.enabled !== enabled)
                 throw new Error('GNOME Shell did not accept the extension setting');
+        },
+        async remove(uuid) {
+            if (typeof uuid !== 'string' || !uuid.length || uuid.length > 256 || /[\x00-\x1f]/.test(uuid))
+                throw new Error('Invalid extension UUID');
+            if (removals.has(uuid)) return removals.get(uuid);
+            if (!backend.canRemove(uuid)) throw new Error('This extension cannot be removed from this account');
+            const operation = (async () => {
+                let removalError = null;
+                try {
+                    const [success] = await proxy.UninstallExtensionAsync(uuid);
+                    if (success !== true) throw new Error('GNOME Shell did not accept the extension removal');
+                } catch (error) { removalError = error; }
+                try {
+                    if (stopped) throw new Error('The extension backend was closed');
+                    await backend.refresh();
+                    if (stopped) throw new Error('The extension backend was closed');
+                } catch (error) { throw removalError ?? error; }
+                if (removalError) throw removalError;
+                if (entries.has(uuid)) throw new Error('The extension is still installed after removal');
+                return true;
+            })().finally(() => removals.delete(uuid));
+            removals.set(uuid, operation); return operation;
         },
         async requestLogout() {
             if (stopped) throw new Error('The extension backend was closed');

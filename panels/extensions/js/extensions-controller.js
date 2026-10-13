@@ -167,6 +167,8 @@ export class ExtensionsController {
         if (current.details?.get_parent() === current.navigation) current.navigation.remove(current.details);
         const installed = this.backend.extensions.find(value => value.uuid === item.uuid);
         const view = createExtensionDetails({ item: installed ?? item, catalog: this.catalog, installed: Boolean(installed),
+            onRemove: uuid => this.remove(uuid).catch(error => { this.report(error); throw error; }),
+            canRemove: () => this.backend.canRemove?.(item.uuid) === true,
             onInstall: async uuid => {
                 try { return await this.backend.install(uuid); }
                 catch (error) { this.report(error); throw error; }
@@ -190,6 +192,7 @@ export class ExtensionsController {
     }
 
     select(uuid) { return this.request('select', uuid); }
+    remove(uuid) { return this.request('remove', uuid); }
     back() { return this.request('back'); }
     request(kind, uuid = null) {
         if (this.closed || this.closing || !this.current) return Promise.resolve(false);
@@ -227,11 +230,17 @@ export class ExtensionsController {
                     if (request !== this._latest || this.closing) { request.resolve(false); continue; }
                     this.showPreferences(item); request.resolve(true);
                 } else {
+                    if (request.kind === 'remove' && (!this.backend.canRemove?.(request.uuid) ||
+                        (current.informationItem?.uuid !== request.uuid && current.catalogItem?.uuid !== request.uuid)))
+                        throw new Error('This extension cannot be removed from this page');
                     if (request.kind === 'back' && this.pageLayout.viewStack.visible_child_name === 'preferences' &&
                         this.window._extension.uuid && this.window.popPreferencesSubpage()) {
                         request.resolve(true); continue;
                     }
-                    if (!await this.window.switchTo(null)) { request.resolve(false); continue; }
+                    if (!await this.window.switchTo(null)) {
+                        if (request.kind === 'remove') throw new Error('The extension prevented closing its preferences');
+                        request.resolve(false); continue;
+                    }
                     if (request !== this._latest || this.closing) { request.resolve(false); continue; }
                     this.clearInformation();
                     this.clearCatalogDetails();
@@ -241,6 +250,7 @@ export class ExtensionsController {
                     } else {
                         current.navigation.pop_to_page(current.landing);
                     }
+                    if (request.kind === 'remove') await this.backend.remove(request.uuid);
                     request.resolve(true);
                 }
             } catch (error) {
@@ -258,7 +268,9 @@ export class ExtensionsController {
         item ??= this.backend.extensions.find(value => value.uuid === this.window._extension.uuid);
         if (!item) return;
         this.clearInformation();
-        current.detailsView = createExtensionDetails({ item, catalog: this.catalog });
+        current.detailsView = createExtensionDetails({ item, catalog: this.catalog,
+            onRemove: uuid => this.remove(uuid).catch(error => { this.report(error); throw error; }),
+            canRemove: () => this.backend.canRemove?.(item.uuid) === true });
         this.pageLayout.details.append(current.detailsView.widget);
         current.information = current.detailsView.information;
         current.informationItem = item;

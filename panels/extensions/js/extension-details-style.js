@@ -14,10 +14,11 @@ export function ensureDetailsStyle() {
         .monge-details-metrics.split > list:last-child {
             border-left: 1px solid var(--border-color);
         }
+
         .monge-details-link, .monge-details-link:visited {
             color: var(--window-fg-color);
         }
-        button.monge-installed-version:disabled { filter: none; color: var(--window-fg-color); }
+
         .monge-review-rating { color: var(--yellow-4); }
         .monge-review-author {
             background: var(--accent-bg-color);

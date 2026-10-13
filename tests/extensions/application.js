@@ -1,6 +1,7 @@
 import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import GdkPixbuf from 'gi://GdkPixbuf';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 const delay = ms => new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { resolve(); return GLib.SOURCE_REMOVE; }));
@@ -37,7 +38,7 @@ export async function run(controller) {
         check(window.get_application().get_application_id() === 'org.monge.Settings.Development', 'isolated development application identity');
         check(controller.current?.panel.get_name() === 'monge-extensions-panel', 'registered Extensions section');
         const iconTheme = Gtk.IconTheme.get_for_display(window.get_display());
-        for (const name of ['globe-alt2-symbolic', 'monge-extensions-outline-symbolic', 'pip-out-symbolic']) {
+        for (const name of ['globe-alt2-symbolic', 'monge-extensions-outline-symbolic', 'pip-out-symbolic', 'monge-hash-symbolic']) {
             check(iconTheme.has_icon(name), `bundled extension icon is available: ${name}`);
             const icon = iconTheme.lookup_icon(name, null, 16, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.FORCE_SYMBOLIC);
             check(icon.get_file().get_uri().startsWith('resource:///org/gnome/Settings/icons/'), `extension icon is bundled independently of the host theme: ${name}`);
@@ -152,7 +153,7 @@ export async function run(controller) {
         await controller.current.catalogDetailsView.start();
         check(controller.current.catalogDetailsView.preview.visible && controller.current.catalogDetailsView.reviews.cards.length === 2,
             'Browse reuses the rich Details component with screenshot and reviews');
-        check(controller.current.catalogDetailsView.installed.label === 'Install…' && controller.current.catalogDetailsView.installed.sensitive,
+        check(controller.current.catalogDetailsView.action.label === 'Install…' && controller.current.catalogDetailsView.action.sensitive,
             'uninstalled compatible catalog details expose Install');
         await stable(window); snapshot(window, 'catalog-details');
         const screenshotDetails = controller.current.catalogDetailsView;
@@ -170,10 +171,10 @@ export async function run(controller) {
         screenshotDetails.imageDialog.close(); await delay(100);
         check(!screenshotDetails.imageDialog && screenshotDetails.preview.get_root() === window,
             'closing screenshot enlargement retains the inline preview and Settings root');
-        controller.current.catalogDetailsView.installed.emit('clicked');
-        for (let attempt = 0; attempt < 100 && controller.current.catalogDetailsView.installed.label !== 'Installed'; attempt++) await delay(10);
+        controller.current.catalogDetailsView.action.emit('clicked');
+        for (let attempt = 0; attempt < 100 && controller.current.catalogDetailsView.action.label !== 'Remove…'; attempt++) await delay(10);
         check(controller.backend.extensions.some(item => item.uuid === 'catalog@monge.test') &&
-            controller.current.catalogDetailsView.installedVersion.label === 'v31', 'installation updates the shared Details badge from backend metadata');
+            controller.current.catalogDetailsView.version.subtitle === '31', 'matching installed and available catalog versions share one value');
         check(controller.current.installed.rows.has('catalog@monge.test'), 'installation refreshes the Installed rows without reopening Settings');
         check(!controller.current.catalogPendingBanner.revealed, 'catalog page does not show a pending banner for an ordinary installation');
         const installedCatalog = controller.backend.extensions.find(item => item.uuid === 'catalog@monge.test');
@@ -186,7 +187,7 @@ export async function run(controller) {
         check(await controller.back() && controller.current.viewStack.visible_child_name === 'browse', 'Back from catalog details restores Browse');
         catalogList.emit('row-activated', catalogList.get_row_at_index(0));
         check(controller.current.navigation.get_visible_page() === controller.current.details, 'same catalog item can be reopened after Back');
-        check(controller.current.catalogDetailsView.installed.label === 'Installed', 'reopened Browse details reflect an installed catalog extension');
+        check(controller.current.catalogDetailsView.action.label === 'Remove…', 'reopened Browse details reflect an installed catalog extension');
         const retiringCatalogDetails = controller.current.catalogDetailsView;
         let catalogStops = 0; const originalStop = retiringCatalogDetails.stop;
         retiringCatalogDetails.stop = () => { catalogStops++; originalStop(); };
@@ -258,13 +259,35 @@ export async function run(controller) {
         modern.version = 42;
         await controller.backend.refresh();
 
-        check(controller.current.detailsView.version.subtitle === 'v31' &&
-            controller.current.detailsView.installedVersion.label === 'v42', 'catalog and installed versions remain distinct on backend updates');
+        check(controller.current.detailsView.version.subtitle === 'Available: 31 Installed: 42',
+            'different catalog and installed versions share one explicitly labelled value');
         const detailsView = controller.current.detailsView;
-        check(detailsView.installed instanceof Gtk.Button && !detailsView.installed.sensitive, 'Installed uses an insensitive button badge');
-        check(detailsView.installedBadge.has_css_class('linked') && detailsView.installedVersion.is_ancestor(detailsView.installedBadge),
-            'installed version appears next to Installed in a linked header badge');
-        check(detailsView.version.title === 'Latest compatible version', 'catalog version label explicitly describes compatibility');
+        check(detailsView.action instanceof Gtk.Button && detailsView.action.sensitive && detailsView.action.label === 'Remove…' &&
+            detailsView.action.has_css_class('destructive-action'), 'installed user extensions have a red Remove action');
+        check(detailsView.information.widget === detailsView.metrics && detailsView.metrics.has_css_class('card') &&
+            !('localMetrics' in detailsView) && !('state' in detailsView) && !('installedVersion' in detailsView),
+            'one statistics card has no Information heading or separate local-state/version rows');
+        check(detailsView.version.title === 'Version', 'the combined version column is labelled Version');
+        const versionImages = [];
+        const collectImages = widget => {
+            if (widget instanceof Gtk.Image) versionImages.push(widget);
+            for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) collectImages(child);
+        };
+        collectImages(detailsView.version);
+        check(versionImages.some(image => image.icon_name === 'monge-hash-symbolic'), 'Version uses the custom hash icon without an exclamation mark');
+        controller.pageLayout.viewStack.visible_child_name = 'details'; await stable(window);
+        const versionImage = versionImages.find(image => image.icon_name === 'monge-hash-symbolic');
+        const iconSnapshot = new Gtk.Snapshot();
+        new Gtk.WidgetPaintable({ widget: versionImage }).snapshot(iconSnapshot, 16, 16);
+        const iconNode = iconSnapshot.to_node();
+        check(Boolean(iconNode), 'the themed Version hash icon produces rendered content');
+        const iconCapture = `${GLib.getenv('MONGE_SCREENSHOT_DIR')}/version-icon.png`;
+        check(window.get_renderer().render_texture(iconNode, null).save_to_png(iconCapture), 'capture the actual themed Version icon');
+        const iconPixels = GdkPixbuf.Pixbuf.new_from_file(iconCapture);
+        const pixels = iconPixels.get_pixels(); let visiblePixels = 0;
+        for (let y = 0; y < iconPixels.get_height(); y++) for (let x = 0; x < iconPixels.get_width(); x++)
+            if (pixels[y * iconPixels.get_rowstride() + x * iconPixels.get_n_channels() + 3] > 0) visiblePixels++;
+        check(visiblePixels > 0, 'the Version hash icon is not fully transparent after symbolic recoloring');
         check(detailsView.metrics.orientation === Gtk.Orientation.HORIZONTAL &&
             detailsView.downloads.has_css_class('property') && detailsView.version.has_css_class('property'),
             'split statistics emphasize the values');
@@ -272,6 +295,13 @@ export async function run(controller) {
             'Details has a decoded extension screenshot');
         check(detailsView.reviews.cards.length === 2 && detailsView.reviews.cards[0].rating.label === '★★★★★',
             'Details contains read-only reviews, ratings and dates');
+        controller.pageLayout.viewStack.visible_child_name = 'details';
+        await stable(window); snapshot(window, 'details-version-different');
+        modern.version = 31; await controller.backend.refresh();
+        check(detailsView.version.subtitle === '31', 'live matching versions collapse to a single value');
+        await stable(window); snapshot(window, 'details-version-matched');
+        modern.version = 42; await controller.backend.refresh();
+        controller.pageLayout.viewStack.visible_child_name = 'preferences';
         await stable(window); snapshot(window, 'preferences');
         check(window.get_default_size().join(',') === size, 'preferences preserve Settings geometry');
         check(!window.search_enabled, 'preferences retain the Settings-style header without a search button');
@@ -286,11 +316,45 @@ export async function run(controller) {
         check(!controller.pageLayout.pendingBanner.revealed, 'Back clears the extension-specific pending banner');
         check(controller.current.navigation.get_visible_page() === controller.current.landing, 'Back restores Installed');
         check(await controller.select('legacy@monge.test'), 'legacy native preferences loaded');
+        check(!controller.current.detailsView.action.sensitive && controller.current.detailsView.action.label === 'Remove…',
+            'system-packaged extensions keep a disabled Remove action');
         check(!controller.pageLayout.pendingBanner.revealed, 'switching to a non-pending extension does not retain the banner');
         check(window.visible_page.get_root() === window && window.get_surface() === surface, 'legacy preferences use same actual window');
         check(controller.current.information.widget.is_ancestor(controller.pageLayout.details) &&
             !controller.pageLayout.inlineSwitcher.visible, 'legacy details are separate and single-page preferences hide the inline switcher');
         check(await controller.back(), 'legacy Back retirement');
+        const removalFixture = controller.backend.extensions.find(item => item.uuid === 'modern@monge.test');
+        check(await controller.select(removalFixture.uuid), 'open a disposable native preferences fixture for removal');
+        const removalPreferences = window._extension.stateObj;
+        controller.pageLayout.viewStack.visible_child_name = 'details'; await controller.current.detailsView.start();
+        const removalDetails = controller.current.detailsView;
+        const findResponse = (widget, label) => {
+            if (widget instanceof Gtk.Button && widget.label === label) return widget;
+            for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) { const found = findResponse(child, label); if (found) return found; }
+            return null;
+        };
+        removalDetails.action.emit('clicked'); await delay(30);
+        check(removalDetails.removalDialog instanceof Adw.AlertDialog && !removalPreferences.closed,
+            'Remove asks for confirmation while keeping native preferences alive');
+        await stable(window);
+        snapshot(window, 'remove-confirmation');
+        findResponse(removalDetails.removalDialog, 'Cancel').emit('clicked'); await delay(30);
+        check(controller.backend.extensions.some(item => item.uuid === removalFixture.uuid) && !removalPreferences.closed,
+            'cancelling removal preserves the installed extension and preferences');
+        const originalRemove = controller.backend.remove;
+        controller.backend.remove = async uuid => {
+            check(uuid === removalFixture.uuid && removalPreferences.closed && !window._extension.uuid,
+                'native close-request cleanup finishes before the removal request');
+            return originalRemove.call(controller.backend, uuid);
+        };
+        removalDetails.action.emit('clicked'); await delay(30);
+        findResponse(removalDetails.removalDialog, 'Remove').emit('clicked');
+        for (let attempt = 0; attempt < 100 && controller.backend.extensions.some(item => item.uuid === removalFixture.uuid); attempt++) await delay(10);
+        await controller.idle; controller.backend.remove = originalRemove;
+        check(!controller.backend.extensions.some(item => item.uuid === removalFixture.uuid) &&
+            !controller.current.installed.rows.has(removalFixture.uuid) && controller.current.navigation.get_visible_page() === controller.current.landing,
+            'confirmed removal returns to Installed and updates the installed rows');
+        controller.backend.extensions.push(removalFixture); await controller.backend.refresh();
         check(await controller.select('modern@monge.test'), 'open extension to remember Details');
         controller.pageLayout.viewStack.visible_child_name = 'details';
         check(await controller.back() && await controller.select('modern@monge.test'), 'reopen after selecting Details');
@@ -301,6 +365,10 @@ export async function run(controller) {
         check(await controller.back(), 'retire remembered-view fixture');
         check(await controller.select('modern@monge.test'), 'modern round trip');
         const veto = window.connect_after('close-request', () => true);
+        const removesBeforeVeto = controller.backend.calls.filter(([method]) => method === 'remove').length;
+        let removalVetoed = false; try { await controller.remove('modern@monge.test'); } catch { removalVetoed = true; }
+        check(removalVetoed && controller.backend.calls.filter(([method]) => method === 'remove').length === removesBeforeVeto &&
+            window._extension.uuid === 'modern@monge.test', 'preferences close veto prevents any removal request');
         check(!await controller.back(), 'Back respects native close veto');
         const retainedInformation = controller.current.information.widget;
         check(!await controller.select('legacy@monge.test') && controller.current.information.widget === retainedInformation,

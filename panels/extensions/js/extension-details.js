@@ -2,7 +2,6 @@ import Adw from 'gi://Adw?version=1';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
-import { createExtensionInfo } from './installed-view.js';
 import { ensureDetailsStyle } from './extension-details-style.js';
 import { createExtensionReviews } from './extension-reviews.js';
 import { decodeExtensionImage } from './extension-image.js';
@@ -15,7 +14,8 @@ function safeLink(value) {
     } catch (_error) { return null; }
 }
 
-export function createExtensionDetails({ item, catalog, installed: initiallyInstalled = true, onInstall, canInstall = () => true }) {
+export function createExtensionDetails({ item, catalog, installed: initiallyInstalled = true, onInstall, canInstall = () => true,
+    onRemove, canRemove = () => false }) {
     ensureDetailsStyle();
     const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 24,
         margin_start: 24, margin_end: 24, margin_top: 32, margin_bottom: 32 });
@@ -28,13 +28,8 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
         use_markup: false, xalign: 0, wrap: true, visible: Boolean(item.creator) });
     author.add_css_class('dim-label');
     identity.append(title); identity.append(author);
-    const installed = new Gtk.Button({ label: 'Installed', sensitive: false, focusable: false, valign: Gtk.Align.CENTER });
-    const installedVersion = new Gtk.Label({ use_markup: false }); installedVersion.add_css_class('heading');
-    const installedVersionButton = new Gtk.Button({ child: installedVersion, sensitive: false, focusable: false });
-    installedVersionButton.add_css_class('monge-installed-version');
-    const installedBadge = new Gtk.Box({ valign: Gtk.Align.CENTER });
-    installedBadge.append(installed); installedBadge.append(installedVersionButton);
-    hero.append(icon); hero.append(identity); hero.append(installedBadge); body.append(hero);
+    const action = new Gtk.Button({ valign: Gtk.Align.CENTER });
+    hero.append(icon); hero.append(identity); hero.append(action); body.append(hero);
     const preview = new Gtk.Picture({ visible: false, can_shrink: true, content_fit: Gtk.ContentFit.CONTAIN });
     const previewOverlay = new Gtk.Overlay({ child: preview, visible: false });
     const expand = new Gtk.Button({ icon_name: 'pip-out-symbolic', tooltip_text: 'Enlarge Screenshot', visible: false,
@@ -62,20 +57,20 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
     const metrics = new Gtk.Box({ homogeneous: true, overflow: Gtk.Overflow.HIDDEN });
     metrics.add_css_class('card'); metrics.add_css_class('monge-details-metrics');
     const downloads = new Adw.ActionRow({ title: 'Downloads', visible: false, use_markup: false });
-    const version = new Adw.ActionRow({ title: 'Latest compatible version', use_markup: false });
+    const version = new Adw.ActionRow({ title: 'Version', use_markup: false, subtitle_lines: 0 });
     const metricLists = [downloads, version].map((row, index) => {
         row.add_css_class('property');
-        row.add_prefix(new Gtk.Image({ icon_name: index === 0 ? 'folder-download-symbolic' : 'system-software-install-symbolic' }));
+        row.add_prefix(new Gtk.Image({ icon_name: index === 0 ? 'folder-download-symbolic' : 'monge-hash-symbolic' }));
         const list = new Gtk.ListBox({ selection_mode: Gtk.SelectionMode.NONE });
         list.append(row); metrics.append(list); return list;
     });
     body.append(metrics);
+    const information = { widget: metrics };
 
     const links = new Adw.PreferencesGroup({ title: 'Links' });
     body.append(links);
     const reviews = createExtensionReviews({ catalog }); body.append(reviews.widget);
-    const information = createExtensionInfo({ ...item, description: '', version: null, url: null });
-    body.append(information.widget);
+
     const status = new Gtk.Label({ xalign: 0, wrap: true }); status.add_css_class('dim-label');
     const retry = new Gtk.Button({ label: 'Retry', halign: Gtk.Align.START, visible: false });
     body.append(status); body.append(retry);
@@ -87,6 +82,8 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
     let online = null;
     let isInstalled = initiallyInstalled;
     let installing = false;
+    let removing = false;
+    let removalDialog = null;
     let loading = Promise.resolve();
     let imageDialog = null;
     expand.connect('clicked', () => {
@@ -122,27 +119,48 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
         title.label = item.name;
         description.label = online?.description ?? item.description ?? '';
         const available = Number.isSafeInteger(online?.version) && online.version > 0 ? online.version : null;
-        version.subtitle = available == null ? '' : `v${available}`;
-        version.visible = available != null;
-        installed.label = isInstalled ? 'Installed' : installing ? 'Installing…' : 'Install…';
-        installed.sensitive = !isInstalled && !installing && !stopped && available != null && Boolean(onInstall) && canInstall();
-        installed.focusable = !isInstalled;
-        if (isInstalled) installed.remove_css_class('suggested-action'); else installed.add_css_class('suggested-action');
-        installedVersion.label = !isInstalled || item.version == null ? '' : `v${item.version}`;
-        installedVersion.visible = isInstalled && item.version != null;
-        installedVersionButton.visible = installedVersion.visible;
-        installedVersionButton.tooltip_text = item.version == null ? null : `Installed version: ${item.version}`;
-        if (installedVersion.visible) installedBadge.add_css_class('linked'); else installedBadge.remove_css_class('linked');
+        const localVersion = isInstalled && item.version != null ? String(item.version) : null;
+        version.subtitle = available != null && localVersion != null && String(available) !== localVersion ?
+            `Available: ${available} Installed: ${localVersion}` : String(available ?? localVersion ?? '');
+        version.visible = Boolean(version.subtitle);
+        version.tooltip_text = available == null ? 'Installed version' : localVersion == null ? 'Latest compatible version' :
+            'Available is the latest version compatible with this GNOME Shell';
+        action.label = isInstalled ? 'Remove…' : installing ? 'Installing…' : 'Install…';
+        action.sensitive = !installing && !removing && !stopped && (isInstalled ? Boolean(onRemove) && canRemove() :
+            available != null && Boolean(onInstall) && canInstall());
+        action.remove_css_class('destructive-action'); action.remove_css_class('suggested-action');
+        action.add_css_class(isInstalled ? 'destructive-action' : 'suggested-action');
+        action.tooltip_text = isInstalled && !canRemove() ? 'This extension cannot be removed from this account' : null;
         metricLists[0].visible = downloads.visible;
         metricLists[1].visible = version.visible;
         metrics.visible = downloads.visible || version.visible;
         if (downloads.visible && version.visible) metrics.add_css_class('split'); else metrics.remove_css_class('split');
-        information.update({ ...item, description: '', version: null, url: null });
-        information.widget.visible = isInstalled;
         updateLinks();
     }
-    installed.connect('clicked', async () => {
-        if (!installed.sensitive || installing || stopped) return;
+    action.connect('clicked', async () => {
+        if (!action.sensitive || installing || removing || stopped) return;
+        if (isInstalled) {
+            if (!widget.get_root()) return;
+            const uuid = item.uuid;
+            removing = true; update(item);
+            const dialog = new Adw.AlertDialog({ heading: `Remove “${item.name}”?`, heading_use_markup: false,
+                body: 'This removes the extension from this account.', body_use_markup: false,
+                default_response: 'cancel', close_response: 'cancel' });
+            dialog.add_response('cancel', 'Cancel'); dialog.add_response('remove', 'Remove');
+            dialog.set_response_appearance('remove', Adw.ResponseAppearance.DESTRUCTIVE);
+            removalDialog = dialog;
+            const closed = new Promise(resolve => dialog.connect('closed', () => { if (removalDialog === dialog) removalDialog = null; resolve(); }));
+            try {
+                const response = await new Promise((resolve, reject) => dialog.choose(widget, null, (_dialog, result) => {
+                    try { resolve(dialog.choose_finish(result)); } catch (error) { reject(error); }
+                }));
+                await closed;
+                if (response === 'remove' && !stopped && isInstalled && item.uuid === uuid && canRemove() && await onRemove(uuid) && !stopped && item.uuid === uuid)
+                    update(item, false);
+            } catch (error) { if (!stopped) status.label = `Removal failed: ${error.message}`; }
+            finally { removing = false; if (!stopped) update(item); }
+            return;
+        }
         installing = true; status.label = ''; update(item);
         try {
             const result = await onInstall(item.uuid);
@@ -206,8 +224,9 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
     }
     retry.connect('clicked', start);
     update(item);
-    return { widget, information, title, author, installed, installedBadge, description, metrics, links, reviews, downloads, version, installedVersion, preview, expand, retry,
+    return { widget, information, title, author, action, description, metrics, links, reviews, downloads, version, preview, expand, retry,
         get imageDialog() { return imageDialog; },
-        start, update, stop() { stopped = true; imageDialog?.force_close(); imageDialog = null;
+        get removalDialog() { return removalDialog; },
+        start, update, stop() { stopped = true; removalDialog?.force_close(); removalDialog = null; imageDialog?.force_close(); imageDialog = null;
             request?.cancel(); request = null; reviews.stop(); } };
 }

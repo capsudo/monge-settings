@@ -16,6 +16,8 @@ function safeWebsite(url) {
     } catch (_error) { return null; }
 }
 
+export function extensionStateTitle(item) { return stateTitles.get(item.state) ?? 'Unknown State'; }
+
 export function createExtensionInfo(item) {
     const widget = new Adw.PreferencesGroup({ title: 'Extension Information' });
     const description = new Adw.ActionRow({ use_markup: false, title_lines: 0 });
@@ -29,7 +31,7 @@ export function createExtensionInfo(item) {
         description.title = value.description ?? '';
         description.visible = Boolean(value.description);
         uuid.subtitle = value.uuid;
-        state.title = stateTitles.get(value.state) ?? 'Unknown State';
+        state.title = extensionStateTitle(value);
         state.subtitle = value.error || '';
         version.subtitle = value.version == null ? '' : String(value.version);
         version.visible = Boolean(version.subtitle);

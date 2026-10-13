@@ -15,10 +15,14 @@ const view = createExtensionDetails({ item, catalog: { details: async ({ uuid })
 try {
     assert(calls === 0, 'Details fetch is lazy');
     assert(view.title.label === item.name && !view.title.use_markup, 'Extension identity is literal');
-    assert(view.installed instanceof Gtk.Button && !view.installed.sensitive,
-        'Installed is the same insensitive button badge as Extension Manager');
-    assert(view.installedBadge.has_css_class('linked') && view.installedVersion.label === 'v3' &&
-        view.installedVersion.is_ancestor(view.installedBadge), 'Installed version is a linked segment beside Installed before online loading');
+    assert(view.action instanceof Gtk.Button && view.action.label === 'Remove…' && view.action.has_css_class('destructive-action'),
+        'Installed Details use the native red Remove action instead of a split installed badge');
+    assert(view.information.widget === view.metrics && view.metrics.has_css_class('card'),
+        'Downloads and Version form a single card without an Information heading');
+    assert(view.description.get_next_sibling() === view.metrics && view.metrics.get_next_sibling() === view.links,
+        'The statistics card immediately follows Description and precedes Links');
+    assert(!('state' in view) && !('installedVersion' in view) && !('localMetrics' in view),
+        'Details no longer has Enabled or Installed version rows');
     assert(view.metrics instanceof Gtk.Box && view.metrics.orientation === Gtk.Orientation.HORIZONTAL && view.metrics.homogeneous,
         'Downloads and Version share a horizontal split card');
     assert(view.downloads.has_css_class('property') && view.version.has_css_class('property'),
@@ -27,25 +31,72 @@ try {
     assert(view.author.label === 'By <b>Author</b>' && !view.author.use_markup, 'Online author remains literal');
     assert(view.description.label === 'Online description', 'Catalog supplies the full description');
     assert(view.downloads.subtitle === '1,234', 'Downloads are shown when supplied');
-    assert(view.version.subtitle === 'v31' && view.version.title === 'Latest compatible version', 'Latest compatible version names the catalog release explicitly');
-    assert(view.installedVersion.label === 'v3', 'The installed version remains in the header badge');
+    assert(view.version.subtitle === 'Available: 31 Installed: 3' && view.version.title === 'Version',
+        'Different versions share one Version cell with explicit Available and Installed labels');
     await view.start(); assert(calls === 1, 'Returning to Details reuses its loaded content');
     view.update({ ...item, version: 42 });
-    assert(view.version.subtitle === 'v31' && view.installedVersion.label === 'v42',
+    assert(view.version.subtitle === 'Available: 31 Installed: 42',
         'Installed metadata updates independently of catalog content');
     view.update({ ...item, version: 31 });
-    assert(view.installedVersion.visible && view.installedVersion.label === 'v31', 'Matching installed and compatible versions still show in the header');
+    assert(view.version.subtitle === '31', 'Matching versions appear once without redundant labels');
+    view.update({ ...item, version: '31' });
+    assert(view.version.subtitle === '31', 'Matching numeric and string metadata versions also appear once');
     view.update({ ...item, version: null });
-    assert(!view.installedVersion.visible && !view.installedBadge.has_css_class('linked'), 'Missing installed version leaves an unsplit Installed badge');
+    assert(view.version.subtitle === '31', 'Unknown installed versions are not invented');
 } finally { view.stop(); }
 const offline = createExtensionDetails({ item, catalog: { details: async () => { throw new Error('offline'); } } });
 try {
     await offline.start();
     assert(offline.description.label === item.description, 'Offline details retain local information');
     assert(offline.retry.visible && !offline.downloads.visible, 'Offline mode offers retry without inventing download counts');
-    assert(offline.installedVersion.label === 'v3' && offline.installedVersion.visible && !offline.version.visible,
-        'Offline header retains the installed version without mislabelling it as the latest compatible version');
+    assert(offline.version.subtitle === '3' && offline.version.visible && offline.version.tooltip_text === 'Installed version',
+        'Offline Version retains known local metadata without claiming an available release');
 } finally { offline.stop(); }
+Gtk.Settings.get_default().gtk_enable_animations = false;
+let removes = 0;
+const removable = createExtensionDetails({ item, canRemove: () => true, onRemove: async uuid => {
+    assert(uuid === item.uuid, 'Removal uses the confirmed UUID'); removes++; return true;
+}, catalog: { details: async () => ({ version: 31 }) } });
+const removalWindow = new Adw.Window({ content: removable.widget, default_width: 760, default_height: 640 });
+function responseButton(widget, label) {
+    if (widget instanceof Gtk.Button && widget.label === label) return widget;
+    for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) {
+        const found = responseButton(child, label); if (found) return found;
+    }
+    return null;
+}
+const pause = () => new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 20, () => { resolve(); return GLib.SOURCE_REMOVE; }));
+try {
+    removalWindow.present(); await removable.start(); await pause();
+    removable.action.emit('clicked'); await pause();
+    assert(removable.removalDialog instanceof Adw.AlertDialog && removes === 0, 'Remove first opens a native confirmation without removing anything');
+    responseButton(removable.removalDialog, 'Cancel').emit('clicked'); await pause();
+    assert(removes === 0 && removable.action.label === 'Remove…' && removable.action.sensitive, 'Cancelling preserves installed state and restores Remove');
+    removable.action.emit('clicked'); await pause();
+    responseButton(removable.removalDialog, 'Remove').emit('clicked'); await pause();
+    assert(removes === 1 && removable.action.label === 'Install…' && removable.version.subtitle === '31', 'Confirmed removal returns remote Details to uninstalled state');
+    removable.update(item, true); removable.action.emit('clicked'); await pause();
+    removable.stop(); await pause();
+    assert(removes === 1 && !removable.removalDialog, 'Retiring Details cancels an open removal confirmation without deleting anything');
+} finally { removable.stop(); removalWindow.destroy(); }
+let finishRemoval;
+const pendingRemoval = createExtensionDetails({ item, canRemove: () => true, onRemove: uuid => {
+    assert(uuid === item.uuid, 'Pending removal uses the confirmed UUID');
+    return new Promise(resolve => { finishRemoval = resolve; });
+} });
+const pendingRemovalWindow = new Adw.Window({ content: pendingRemoval.widget, default_width: 760, default_height: 640 });
+try {
+    pendingRemovalWindow.present(); await pause();
+    pendingRemoval.action.emit('clicked'); await pause();
+    responseButton(pendingRemoval.removalDialog, 'Remove').emit('clicked'); await pause();
+    assert(typeof finishRemoval === 'function' && !pendingRemoval.action.sensitive, 'Confirmed removal waits for the pending request');
+    const replacement = { ...item, uuid: 'replacement@test', name: 'Replacement', version: 42 };
+    pendingRemoval.update(replacement, true);
+    finishRemoval(true); await pause();
+    assert(pendingRemoval.title.label === replacement.name && pendingRemoval.action.label === 'Remove…' &&
+        pendingRemoval.action.sensitive && pendingRemoval.version.visible &&
+        pendingRemoval.version.subtitle === '42', 'A late removal result must not mark a replacement UUID uninstalled');
+} finally { pendingRemoval.stop(); pendingRemovalWindow.destroy(); }
 let finishInstall; let installs = 0;
 const remote = createExtensionDetails({ item: { ...item, version: null }, installed: false,
     catalog: { details: async () => ({ version: 31, description: item.description }) },
@@ -53,15 +104,16 @@ const remote = createExtensionDetails({ item: { ...item, version: null }, instal
         return new Promise(resolve => { finishInstall = resolve; }); },
 });
 try {
-    assert(!remote.information.widget.visible && !remote.installedVersion.visible, 'Uninstalled Details hide local state and installed version');
+    assert(!remote.version.visible, 'Uninstalled Details do not invent a local version before catalog loading');
     await remote.start();
-    assert(remote.installed.label === 'Install…' && remote.installed.sensitive, 'Compatible remote extensions provide Install');
-    remote.installed.emit('clicked');
-    assert(installs === 1 && !remote.installed.sensitive && remote.installed.label === 'Installing…', 'Pending installation disables duplicate requests');
+    assert(remote.version.subtitle === '31', 'Uninstalled Details show only the available compatible version');
+    assert(remote.action.label === 'Install…' && remote.action.sensitive, 'Compatible remote extensions provide Install');
+    remote.action.emit('clicked');
+    assert(installs === 1 && !remote.action.sensitive && remote.action.label === 'Installing…', 'Pending installation disables duplicate requests');
     finishInstall({ ...item, version: 31 });
     await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => { resolve(); return GLib.SOURCE_REMOVE; }));
-    assert(remote.installed.label === 'Installed' && !remote.installed.sensitive && remote.installedVersion.label === 'v31',
-        'Verified installation transitions the same Details page to the installed badge');
+    assert(remote.action.label === 'Remove…' && remote.version.subtitle === '31',
+        'Verified matching-version installation retains one Version value');
 } finally { remote.stop(); }
 for (const outcome of ['cancelled', 'failed', 'incompatible']) {
     const checkInstall = createExtensionDetails({ item: { ...item, version: null }, installed: false,
@@ -70,11 +122,11 @@ for (const outcome of ['cancelled', 'failed', 'incompatible']) {
     });
     try {
         await checkInstall.start();
-        if (outcome === 'incompatible') assert(!checkInstall.installed.sensitive, 'Incompatible extensions cannot be installed');
+        if (outcome === 'incompatible') assert(!checkInstall.action.sensitive, 'Incompatible extensions cannot be installed');
         else {
-            checkInstall.installed.emit('clicked');
+            checkInstall.action.emit('clicked');
             await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => { resolve(); return GLib.SOURCE_REMOVE; }));
-            assert(checkInstall.installed.label === 'Install…' && checkInstall.installed.sensitive && !checkInstall.installedVersion.visible,
+            assert(checkInstall.action.label === 'Install…' && checkInstall.action.sensitive && checkInstall.version.subtitle === '31',
                 'Cancelled or failed installation returns to Install without inventing installed state');
         }
     } finally { checkInstall.stop(); }

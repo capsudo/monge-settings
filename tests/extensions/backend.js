@@ -28,6 +28,18 @@ const service = {
     GetExtensionInfo(uuid) { return data[uuid] ?? {}; },
     EnableExtension(uuid) { calls.push(['enable', uuid]); return uuid !== 'reject@example'; },
     DisableExtension(uuid) { calls.push(['disable', uuid]); if (data[uuid]) data[uuid].enabled = new GLib.Variant('b', false); return Boolean(data[uuid]); },
+    UninstallExtension(uuid) {
+        calls.push(['remove', uuid]);
+        if (uuid === 'reject-remove@example') return false;
+        if (uuid === 'false-removed@example' || uuid === 'error-removed@example') {
+            delete data[uuid];
+            if (uuid === 'error-removed@example') throw new Error('Removal RPC failed after deletion');
+            return false;
+        }
+        if (uuid === 'kept@example') return true;
+        if (!data[uuid] || data[uuid].type.get_double() !== 2) return false;
+        delete data[uuid]; return true;
+    },
     InstallRemoteExtension(uuid) {
         calls.push(['install', uuid]);
         if (uuid === 'cancel@example') return 'cancelled';
@@ -89,11 +101,59 @@ const owner = Gio.bus_own_name(Gio.BusType.SESSION, 'org.monge.Settings.BackendF
             assert(concurrent.every(item => item.uuid === 'concurrent@example') &&
                 calls.filter(([method, uuid]) => method === 'install' && uuid === 'concurrent@example').length === 1,
                 'Concurrent installation requests share one native consent request');
+            assert(!backend.canRemove('system@example') && backend.canRemove('catalog@example'), 'Only per-user extensions may be removed');
+            let protectedSystem = false; try { await backend.remove('system@example'); } catch { protectedSystem = true; }
+            assert(protectedSystem && !calls.some(([method, uuid]) => method === 'remove' && uuid === 'system@example'), 'System packages are rejected before any removal request');
+            assert(await backend.remove('catalog@example') && !backend.extensions.some(item => item.uuid === 'catalog@example'),
+                'Removal succeeds only after the exact UUID is absent from read-back');
+            await backend.install('kept@example'); await backend.install('reject-remove@example');
+            for (const uuid of ['kept@example', 'reject-remove@example']) {
+                let failed = false; try { await backend.remove(uuid); } catch { failed = true; }
+                assert(failed && backend.extensions.some(item => item.uuid === uuid), 'Rejected removal and false-success replies retain installed state');
+            }
+            const unreconciledRemovals = [];
+            for (const uuid of ['false-removed@example', 'error-removed@example']) {
+                await backend.install(uuid);
+                let removalError = null;
+                try { await backend.remove(uuid); } catch (error) { removalError = error; }
+                const expectedError = uuid === 'false-removed@example' ? 'GNOME Shell did not accept the extension removal' :
+                    'Removal RPC failed after deletion';
+                assert(removalError?.message.includes(expectedError), 'Unsuccessful removal preserves the original RPC error');
+                assert(!data[uuid], 'The unsuccessful RPC actually removed the exact service entry');
+                if (backend.extensions.some(item => item.uuid === uuid)) unreconciledRemovals.push(uuid);
+            }
+            assert(!unreconciledRemovals.length, `Unsuccessful removal must reconcile exact UUID absence: ${unreconciledRemovals.join(', ')}`);
+            assert(backend.extensions.some(item => item.uuid === 'user@example') &&
+                backend.extensions.some(item => item.uuid === 'system@example'), 'Removal read-back preserves unrelated installed UUIDs');
+            await backend.install('refresh-remove@example');
+            const listExtensions = service.ListExtensions;
+            const reads = [];
+            delete service.ListExtensions;
+            service.ListExtensionsAsync = (_parameters, invocation) => reads.push(() =>
+                invocation.return_value(new GLib.Variant('(a{sa{sv}})', [data])));
+            let removalFinished = false; let concurrentError = null;
+            const concurrentRemoval = backend.remove('refresh-remove@example').then(() => { removalFinished = true; }, error => {
+                concurrentError = error; removalFinished = true;
+            });
+            for (let attempt = 0; attempt < 100 && !reads.length; attempt++)
+                await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => { resolve(); return GLib.SOURCE_REMOVE; }));
+            const competingRefresh = backend.refresh();
+            for (let attempt = 0; attempt < 100 && reads.length < 2; attempt++)
+                await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => { resolve(); return GLib.SOURCE_REMOVE; }));
+            reads[0]();
+            await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => { resolve(); return GLib.SOURCE_REMOVE; }));
+            const waitedForLatest = !removalFinished;
+            reads[1](); await competingRefresh; await concurrentRemoval;
+            delete service.ListExtensionsAsync; service.ListExtensions = listExtensions;
+            assert(waitedForLatest && !concurrentError && !backend.extensions.some(item => item.uuid === 'refresh-remove@example'),
+                'Removal waits for the completed latest readback when its own refresh is superseded');
             const settings = new Gio.Settings({ schema_id: 'org.gnome.shell' });
             settings.set_boolean('allow-extension-installation', false);
             let locked = false; try { await backend.install('locked@example'); } catch { locked = true; }
             assert(locked && !calls.some(([method, uuid]) => method === 'install' && uuid === 'locked@example'),
                 'Shell installation policy prevents the request, not only the button');
+            assert(backend.canRemove('concurrent@example') && await backend.remove('concurrent@example'),
+                'Installation policy does not prevent native per-user removal');
             unsubscribe(); backend.stop();
             settings.set_boolean('allow-extension-installation', true);
             const retiring = await createBackend({ destination: 'org.monge.Settings.BackendFixture' });

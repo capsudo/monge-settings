@@ -126,7 +126,7 @@ try {
     list.emit('row-activated', list.get_row_at_index(0));
     assert(details.length === 1 && details[0] instanceof Gtk.Widget, 'Selection must deliver a real detail widget to the parent');
     const detailLabels = descendants(details[0]).filter(child => child instanceof Gtk.Label);
-    for (const text of [item.name, item.description, `By ${item.creator}`, 'Installed'])
+    for (const text of [item.name, item.description, `By ${item.creator}`, 'Remove…'])
         assert(detailLabels.some(label => label.label === text && !label.use_markup), `Plain details text missing: ${text}`);
     const actions = descendants(details[0]).filter(child => child instanceof Gtk.LinkButton);
     assert(actions.length === 1 && actions[0] instanceof Gtk.LinkButton &&

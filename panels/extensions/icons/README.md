@@ -16,3 +16,11 @@ License: CC0-1.0; upstream license retained in `COPYING.md`.
 `30d36c4c46fa3db771ed7c7b3d652203ebc51064`.
 Upstream: https://github.com/mjakeman/extension-manager
 License: upstream GPLv3, covered by the fork's root `LICENSE`.
+
+## Version icon
+
+`monge-hash-symbolic.svg` is original artwork for Monge Settings: a hash (`#`)
+on a 16×16 canvas, with filled outlines of monochrome 2px rounded strokes to
+match the surrounding symbolic icons. Filled paths support GTK symbolic
+recoloring. It contains no exclamation mark.
+License: GPL-3.0-or-later, covered by the fork's root `LICENSE`.
