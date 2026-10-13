@@ -108,12 +108,13 @@ export function createCatalog({ shellVersion, endpoint = 'https://extensions.gno
             return bytes;
     }
     return {
-        async query({ search = '', page = 1, cancellable = null } = {}) {
+        async query({ search = '', sort = 'popularity', page = 1, cancellable = null } = {}) {
             if (typeof search !== 'string' || search.length > 512 ||
-                !Number.isSafeInteger(page) || page < 1 || page > 100000)
+                !Number.isSafeInteger(page) || page < 1 || page > 100000 ||
+                !['popularity', 'downloads', 'created', 'name'].includes(sort))
                 throw new Error('Invalid catalog query');
             const uri = `${endpoint}?shell_version=${encodeURIComponent(shellVersion)}` +
-                `&search=${encodeURIComponent(search)}&page=${page}&sort=popularity&n_per_page=10`;
+                `&search=${encodeURIComponent(search)}&page=${page}&sort=${sort}&n_per_page=10`;
             const bytes = await fetchBytes(uri, cancellable);
             const data = JSON.parse(new TextDecoder().decode(bytes));
             if (!data || !Array.isArray(data.extensions) || data.extensions.length > 25 ||

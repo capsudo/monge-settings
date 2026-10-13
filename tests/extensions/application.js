@@ -84,14 +84,78 @@ export async function run(controller) {
         };
         const catalogList = findList(controller.current.browse.widget);
         check(Boolean(catalogList?.get_row_at_index(0)), 'Browse renders catalog rows');
+        const originalSize = window.get_default_size();
+        window.set_default_size(1500, originalSize[1]); await stable(window);
+        check(catalogList.get_width() <= 720, 'Browse remains clamped in a wide Settings window');
+        snapshot(window, 'browse-wide');
+        window.set_default_size(...originalSize); await stable(window);
         snapshot(window, 'browse');
-        catalogList.select_row(catalogList.get_row_at_index(0));
+        const style = Adw.StyleManager.get_default(); const originalScheme = style.color_scheme;
+        style.color_scheme = Adw.ColorScheme.FORCE_DARK; await stable(window); snapshot(window, 'browse-dark');
+        const browseAdjustment = controller.current.browse.widget.get_vadjustment();
+        browseAdjustment.value = browseAdjustment.upper - browseAdjustment.page_size;
+        await delay(100); snapshot(window, 'browse-more-dark');
+        browseAdjustment.value = 0; style.color_scheme = originalScheme; await stable(window);
+        const rowInstall = catalogList.get_row_at_index(1)._install;
+        rowInstall.emit('clicked');
+        for (let attempt = 0; attempt < 100 && rowInstall.label !== 'Installed'; attempt++) await delay(10);
+        check(rowInstall.label === 'Installed' && controller.backend.extensions.some(item => item.uuid === 'catalog-row@monge.test'),
+            'Browse row installation updates verified installed state');
+        check(controller.current.navigation.get_visible_page() === controller.current.landing, 'row Install remains independent of Details navigation');
+        const findMore = widget => {
+            if (widget.get_name() === 'browse-more') return widget;
+            for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) { const found = findMore(child); if (found) return found; }
+            return null;
+        };
+        const firstCatalogRow = catalogList.get_row_at_index(0);
+        const moreResults = findMore(controller.current.browse.widget);
+        const findSearch = widget => {
+            if (widget.get_name() === 'browse-search') return widget;
+            for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) { const found = findSearch(child); if (found) return found; }
+            return null;
+        };
+        check(catalogList.get_width() === findSearch(controller.current.browse.widget).get_parent().get_width() &&
+            moreResults.get_parent().get_width() === catalogList.get_width(), 'search, catalog cards and Load More have the same allocated width');
+        moreResults.emit('activated');
+        for (let attempt = 0; attempt < 100 && moreResults.get_parent().visible; attempt++) await delay(10);
+        check(catalogList.get_row_at_index(0) === firstCatalogRow && catalogList.get_row_at_index(8)?._catalogItem.uuid === 'catalog-more@monge.test',
+            'Load More appends unique results while retaining existing rows');
+        check(controller.current.browse.widget instanceof Gtk.ScrolledWindow &&
+            controller.current.browse.widget.get_vadjustment().upper > controller.current.browse.widget.get_vadjustment().page_size,
+            'catalog scrollbar belongs to the main Browse view');
+        catalogList.emit('row-activated', catalogList.get_row_at_index(0));
+        await controller.current.catalogDetailsView.start();
+        check(controller.current.catalogDetailsView.preview.visible && controller.current.catalogDetailsView.reviews.cards.length === 2,
+            'Browse reuses the rich Details component with screenshot and reviews');
+        check(controller.current.catalogDetailsView.installed.label === 'Install…' && controller.current.catalogDetailsView.installed.sensitive,
+            'uninstalled compatible catalog details expose Install');
+        await stable(window); snapshot(window, 'catalog-details');
+        controller.current.catalogDetailsView.installed.emit('clicked');
+        for (let attempt = 0; attempt < 100 && controller.current.catalogDetailsView.installed.label !== 'Installed'; attempt++) await delay(10);
+        check(controller.backend.extensions.some(item => item.uuid === 'catalog@monge.test') &&
+            controller.current.catalogDetailsView.installedVersion.label === 'v31', 'installation updates the shared Details badge from backend metadata');
+        check(controller.current.installed.rows.has('catalog@monge.test'), 'installation refreshes the Installed rows without reopening Settings');
         check(controller.current.navigation.get_visible_page() === controller.current.details && !window._extension.uuid,
             'Browse details use in-window navigation without loading preferences');
         check(await controller.back() && controller.current.viewStack.visible_child_name === 'browse', 'Back from catalog details restores Browse');
-        catalogList.select_row(catalogList.get_row_at_index(0));
+        catalogList.emit('row-activated', catalogList.get_row_at_index(0));
         check(controller.current.navigation.get_visible_page() === controller.current.details, 'same catalog item can be reopened after Back');
-        check(await controller.back(), 'catalog details second Back');
+        check(controller.current.catalogDetailsView.installed.label === 'Installed', 'reopened Browse details reflect an installed catalog extension');
+        const retiringCatalogDetails = controller.current.catalogDetailsView;
+        let catalogStops = 0; const originalStop = retiringCatalogDetails.stop;
+        retiringCatalogDetails.stop = () => { catalogStops++; originalStop(); };
+        const findNativeBack = widget => {
+            if (widget instanceof Gtk.Button && widget.get_action_name() === 'navigation.pop') return widget;
+            for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) {
+                const found = findNativeBack(child); if (found) return found;
+            }
+            return null;
+        };
+        const nativeBack = findNativeBack(controller.current.details);
+        check(Boolean(nativeBack), 'catalog Details exposes its native header Back button');
+        nativeBack.emit('clicked'); await delay(20);
+        check(controller.current.navigation.get_visible_page() === controller.current.landing &&
+            controller.current.catalogDetailsView === null && catalogStops === 1, 'native catalog Back retires the Details resources');
         controller.current.viewStack.visible_child_name = 'installed';
         const surface = window.get_surface(); const size = window.get_default_size().join(',');
         check(await controller.select('information@monge.test'), 'extension without preferences opens information');

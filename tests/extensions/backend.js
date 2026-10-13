@@ -20,6 +20,15 @@ const service = {
     GetExtensionInfo(uuid) { return data[uuid] ?? {}; },
     EnableExtension(uuid) { calls.push(['enable', uuid]); return uuid !== 'reject@example'; },
     DisableExtension(uuid) { calls.push(['disable', uuid]); if (data[uuid]) data[uuid].enabled = new GLib.Variant('b', false); return Boolean(data[uuid]); },
+    InstallRemoteExtension(uuid) {
+        calls.push(['install', uuid]);
+        if (uuid === 'cancel@example') return 'cancelled';
+        if (uuid === 'missing@example') return 'successful';
+        if (uuid === 'reject@example') throw new Error('Installation rejected');
+        data[uuid] = { ...data['user@example'], uuid: new GLib.Variant('s', uuid),
+            name: new GLib.Variant('s', 'Installed from catalog'), enabled: new GLib.Variant('b', true) };
+        return 'successful';
+    },
     get ShellVersion() { return '49.4'; },
     get UserExtensionsEnabled() { return globalEnabled; },
     set UserExtensionsEnabled(value) {
@@ -52,7 +61,33 @@ const owner = Gio.bus_own_name(Gio.BusType.SESSION, 'org.monge.Settings.BackendF
             await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 40, () => { resolve(); return GLib.SOURCE_REMOVE; }));
             assert(backend.extensions.find(x => x.uuid === 'system@example').name === 'Updated', 'live metadata reflected');
             assert(notifications > 0, 'subscriptions notified');
+            const installed = await backend.install('catalog@example');
+            assert(installed.uuid === 'catalog@example' && backend.extensions.some(item => item.uuid === installed.uuid),
+                'Installation is successful only after exact installed-state read-back');
+            assert(await backend.install('cancel@example') === null && !backend.extensions.some(item => item.uuid === 'cancel@example'),
+                'Cancelling the native installation prompt is not a success');
+            for (const uuid of ['missing@example', 'reject@example']) {
+                let failed = false; try { await backend.install(uuid); } catch { failed = true; }
+                assert(failed, 'Installation errors and missing read-back are rejected');
+            }
+            let duplicate = false; try { await backend.install('catalog@example'); } catch { duplicate = true; }
+            assert(duplicate && calls.filter(([method, uuid]) => method === 'install' && uuid === 'catalog@example').length === 1,
+                'Already-installed extensions are not silently reinstalled or updated');
+            const concurrent = await Promise.all([backend.install('concurrent@example'), backend.install('concurrent@example')]);
+            assert(concurrent.every(item => item.uuid === 'concurrent@example') &&
+                calls.filter(([method, uuid]) => method === 'install' && uuid === 'concurrent@example').length === 1,
+                'Concurrent installation requests share one native consent request');
+            const settings = new Gio.Settings({ schema_id: 'org.gnome.shell' });
+            settings.set_boolean('allow-extension-installation', false);
+            let locked = false; try { await backend.install('locked@example'); } catch { locked = true; }
+            assert(locked && !calls.some(([method, uuid]) => method === 'install' && uuid === 'locked@example'),
+                'Shell installation policy prevents the request, not only the button');
             unsubscribe(); backend.stop();
+            settings.set_boolean('allow-extension-installation', true);
+            const retiring = await createBackend({ destination: 'org.monge.Settings.BackendFixture' });
+            const pendingInstall = retiring.install('late@example'); retiring.stop();
+            let closed = false; try { await pendingInstall; } catch (error) { closed = error.message.includes('closed'); }
+            assert(closed, 'Stopped backends reject late installation results instead of claiming success');
             print('PASS backend: real private D-Bus reads, writes, rejection, live metadata and teardown');
         } catch (error) { logError(error); globalThis.failed = true; }
         finally { exported.unexport(); Gio.bus_unown_name(owner); loop.quit(); }

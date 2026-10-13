@@ -85,7 +85,9 @@ export class ExtensionsController {
         const browse = createBrowseView({ shellVersion: this.backend.shellVersion,
             installedUuids: this.backend.extensions.map(item => item.uuid),
             ...(this.catalog ? { catalog: this.catalog } : {}),
-            onDetails: widget => this.showDetails(widget) });
+            onInstall: uuid => this.backend.install(uuid), onError: error => this.report(error),
+            canInstall: () => this.backend.canInstall === true,
+            onDetails: item => this.showDetails(item) });
         viewStack.add_titled_with_icon(browse.widget, 'browse', 'Browse', 'globe-alt2-symbolic');
         const header = new Adw.HeaderBar({ title_widget: new Adw.ViewSwitcher({ stack: viewStack, policy: Adw.ViewSwitcherPolicy.WIDE }) });
         const toolbar = new Adw.ToolbarView({ content: viewStack }); toolbar.add_top_bar(header);
@@ -94,11 +96,21 @@ export class ExtensionsController {
             child: this.window.monge_preferences_content });
         navigation.add(preferencesPage);
         this.current = { panel, navigation, landing, preferencesPage, viewStack, installed, browse, details: null };
+        navigation.connect('popped', (_navigation, page) => {
+            if (this.current?.navigation === navigation && page === this.current.details) this.clearCatalogDetails();
+        });
         this.current.unsubscribeInformation = this.backend.subscribe(() => {
             const current = this.current;
-            if (!current?.informationItem) return;
-            const item = this.backend.extensions.find(value => value.uuid === current.informationItem.uuid);
-            if (item) { current.informationItem = item; current.detailsView.update(item); }
+            if (!current) return;
+            current.browse.updateInstalled(this.backend.extensions.map(value => value.uuid));
+            if (current.informationItem) {
+                const item = this.backend.extensions.find(value => value.uuid === current.informationItem.uuid);
+                if (item) { current.informationItem = item; current.detailsView.update(item); }
+            }
+            if (current.catalogItem) {
+                const item = this.backend.extensions.find(value => value.uuid === current.catalogItem.uuid);
+                current.catalogDetailsView?.update(item ?? current.catalogItem, Boolean(item));
+            }
         });
         viewStack.connect('notify::visible-child-name', () => {
             if (this.current?.viewStack !== viewStack) return;
@@ -107,11 +119,27 @@ export class ExtensionsController {
         this.window.title = 'Settings';
     }
 
-    showDetails(widget) {
+    showDetails(item) {
         if (!this.current || this.closing) return;
-        const toolbar = new Adw.ToolbarView({ content: widget }); toolbar.add_top_bar(new Adw.HeaderBar());
-        const details = new Adw.NavigationPage({ title: 'Extension Details', child: toolbar });
-        this.current.details = details; this.current.navigation.push(details);
+        const current = this.current;
+        this.clearCatalogDetails();
+        if (current.details?.get_parent() === current.navigation) current.navigation.remove(current.details);
+        const installed = this.backend.extensions.find(value => value.uuid === item.uuid);
+        const view = createExtensionDetails({ item: installed ?? item, catalog: this.catalog, installed: Boolean(installed),
+            onInstall: async uuid => {
+                try { return await this.backend.install(uuid); }
+                catch (error) { this.report(error); throw error; }
+            }, canInstall: () => this.backend.canInstall === true });
+        const toolbar = new Adw.ToolbarView({ content: view.widget }); toolbar.add_top_bar(new Adw.HeaderBar());
+        const details = new Adw.NavigationPage({ title: item.name, child: toolbar });
+        current.catalogItem = item; current.catalogDetailsView = view;
+        current.details = details; current.navigation.push(details); view.start();
+    }
+
+    clearCatalogDetails() {
+        if (!this.current) return;
+        this.current.catalogDetailsView?.stop();
+        this.current.catalogDetailsView = null; this.current.catalogItem = null;
     }
 
     select(uuid) { return this.request('select', uuid); }
@@ -159,6 +187,7 @@ export class ExtensionsController {
                     if (!await this.window.switchTo(null)) { request.resolve(false); continue; }
                     if (request !== this._latest || this.closing) { request.resolve(false); continue; }
                     this.clearInformation();
+                    this.clearCatalogDetails();
                     this.window.title = 'Settings'; this.backButton.visible = false;
                     if (request.kind === 'section') {
                         this.stopPanel(); this.window.emit('monge-continue-panel');
@@ -213,6 +242,7 @@ export class ExtensionsController {
     stopPanel() {
         if (!this.current) return;
         this.current.unsubscribeInformation();
+        this.clearCatalogDetails();
         this.clearInformation();
         this.current.installed.stop(); this.current.browse.stop();
         this.current.preferencesPage.set_child(null);

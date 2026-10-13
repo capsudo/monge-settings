@@ -15,7 +15,7 @@ function safeLink(value) {
     } catch (_error) { return null; }
 }
 
-export function createExtensionDetails({ item, catalog }) {
+export function createExtensionDetails({ item, catalog, installed: initiallyInstalled = true, onInstall, canInstall = () => true }) {
     ensureDetailsStyle();
     const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 24,
         margin_start: 24, margin_end: 24, margin_top: 32, margin_bottom: 32 });
@@ -24,7 +24,8 @@ export function createExtensionDetails({ item, catalog }) {
     const identity = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 6, hexpand: true });
     const title = new Gtk.Label({ label: item.name, use_markup: false, xalign: 0, wrap: true, selectable: true });
     title.add_css_class('title-1');
-    const author = new Gtk.Label({ use_markup: false, xalign: 0, wrap: true, visible: false });
+    const author = new Gtk.Label({ label: item.creator ? `By ${item.creator}` : '',
+        use_markup: false, xalign: 0, wrap: true, visible: Boolean(item.creator) });
     author.add_css_class('dim-label');
     identity.append(title); identity.append(author);
     const installed = new Gtk.Button({ label: 'Installed', sensitive: false, focusable: false, valign: Gtk.Align.CENTER });
@@ -67,13 +68,15 @@ export function createExtensionDetails({ item, catalog }) {
     let started = false;
     let request = null;
     let online = null;
+    let isInstalled = initiallyInstalled;
+    let installing = false;
     let loading = Promise.resolve();
     const linkRows = [];
     function updateLinks() {
         for (const row of linkRows) links.remove(row);
         linkRows.length = 0;
         for (const [label, uri, iconName] of [['Homepage', online?.homepage ?? item.url, 'go-home-symbolic'],
-            ['View on Extensions', online?.website, 'web-browser-symbolic']]) {
+            ['View on Extensions', online?.website ?? item.website, 'web-browser-symbolic']]) {
             const safe = safeLink(uri);
             if (!safe) continue;
             const row = new Adw.ActionRow({ title: label, subtitle: safe, use_markup: false });
@@ -84,15 +87,20 @@ export function createExtensionDetails({ item, catalog }) {
         }
         links.visible = Boolean(linkRows.length);
     }
-    function update(value) {
+    function update(value, installedNow = isInstalled) {
         item = value;
+        isInstalled = installedNow;
         title.label = item.name;
         description.label = online?.description ?? item.description ?? '';
         const available = Number.isSafeInteger(online?.version) && online.version > 0 ? online.version : null;
         version.subtitle = available == null ? '' : `v${available}`;
         version.visible = available != null;
-        installedVersion.label = item.version == null ? '' : `v${item.version}`;
-        installedVersion.visible = item.version != null;
+        installed.label = isInstalled ? 'Installed' : installing ? 'Installing…' : 'Install…';
+        installed.sensitive = !isInstalled && !installing && !stopped && available != null && Boolean(onInstall) && canInstall();
+        installed.focusable = !isInstalled;
+        if (isInstalled) installed.remove_css_class('suggested-action'); else installed.add_css_class('suggested-action');
+        installedVersion.label = !isInstalled || item.version == null ? '' : `v${item.version}`;
+        installedVersion.visible = isInstalled && item.version != null;
         installedVersionButton.visible = installedVersion.visible;
         installedVersionButton.tooltip_text = item.version == null ? null : `Installed version: ${item.version}`;
         if (installedVersion.visible) installedBadge.add_css_class('linked'); else installedBadge.remove_css_class('linked');
@@ -101,8 +109,26 @@ export function createExtensionDetails({ item, catalog }) {
         metrics.visible = downloads.visible || version.visible;
         if (downloads.visible && version.visible) metrics.add_css_class('split'); else metrics.remove_css_class('split');
         information.update({ ...item, description: '', version: null, url: null });
+        information.widget.visible = isInstalled;
         updateLinks();
     }
+    installed.connect('clicked', async () => {
+        if (!installed.sensitive || installing || stopped) return;
+        installing = true; status.label = ''; update(item);
+        try {
+            const result = await onInstall(item.uuid);
+            if (stopped) return;
+            if (result) {
+                if (result.uuid !== item.uuid) throw new Error('Installed extension identity does not match');
+                update(result, true);
+            }
+        } catch (error) {
+            if (!stopped) status.label = `Installation failed: ${error.message}`;
+        } finally {
+            installing = false;
+            if (!stopped) update(item);
+        }
+    });
     function start() {
         if (stopped || started) return loading;
         loading = load();
@@ -141,7 +167,8 @@ export function createExtensionDetails({ item, catalog }) {
         } catch (_error) {
             if (!stopped && request === cancellable) {
                 started = false;
-                status.label = 'Additional details could not be loaded. Installed information is still available.';
+                status.label = isInstalled ? 'Additional details could not be loaded. Installed information is still available.' :
+                    'Additional details could not be loaded. Try again to check compatibility.';
                 retry.visible = true;
                 reviews.load(null);
             }

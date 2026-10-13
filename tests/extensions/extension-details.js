@@ -46,6 +46,39 @@ try {
     assert(offline.installedVersion.label === 'v3' && offline.installedVersion.visible && !offline.version.visible,
         'Offline header retains the installed version without mislabelling it as the latest compatible version');
 } finally { offline.stop(); }
+let finishInstall; let installs = 0;
+const remote = createExtensionDetails({ item: { ...item, version: null }, installed: false,
+    catalog: { details: async () => ({ version: 31, description: item.description }) },
+    onInstall: uuid => { assert(uuid === item.uuid, 'Install uses the exact catalog UUID'); installs++;
+        return new Promise(resolve => { finishInstall = resolve; }); },
+});
+try {
+    assert(!remote.information.widget.visible && !remote.installedVersion.visible, 'Uninstalled Details hide local state and installed version');
+    await remote.start();
+    assert(remote.installed.label === 'Install…' && remote.installed.sensitive, 'Compatible remote extensions provide Install');
+    remote.installed.emit('clicked');
+    assert(installs === 1 && !remote.installed.sensitive && remote.installed.label === 'Installing…', 'Pending installation disables duplicate requests');
+    finishInstall({ ...item, version: 31 });
+    await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => { resolve(); return GLib.SOURCE_REMOVE; }));
+    assert(remote.installed.label === 'Installed' && !remote.installed.sensitive && remote.installedVersion.label === 'v31',
+        'Verified installation transitions the same Details page to the installed badge');
+} finally { remote.stop(); }
+for (const outcome of ['cancelled', 'failed', 'incompatible']) {
+    const checkInstall = createExtensionDetails({ item: { ...item, version: null }, installed: false,
+        catalog: { details: async () => ({ version: outcome === 'incompatible' ? null : 31 }) },
+        onInstall: async () => { if (outcome === 'failed') throw new Error('Denied'); return null; },
+    });
+    try {
+        await checkInstall.start();
+        if (outcome === 'incompatible') assert(!checkInstall.installed.sensitive, 'Incompatible extensions cannot be installed');
+        else {
+            checkInstall.installed.emit('clicked');
+            await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => { resolve(); return GLib.SOURCE_REMOVE; }));
+            assert(checkInstall.installed.label === 'Install…' && checkInstall.installed.sensitive && !checkInstall.installedVersion.visible,
+                'Cancelled or failed installation returns to Install without inventing installed state');
+        }
+    } finally { checkInstall.stop(); }
+}
 let finish; let cancelled = false;
 const pending = createExtensionDetails({ item, catalog: { details: ({ cancellable }) => {
     cancellable.connect(() => { cancelled = true; });

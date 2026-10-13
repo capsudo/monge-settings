@@ -32,6 +32,7 @@ const implementation = Gio.File.new_for_uri(import.meta.url).get_parent().get_pa
 assert(implementation.query_exists(null), 'Browse view implementation is missing');
 const { createBrowseView } = await import('../../panels/extensions/js/browse-view.js');
 const { createCatalog } = await import('../../panels/extensions/js/catalog.js');
+const { createExtensionDetails } = await import('../../panels/extensions/js/extension-details.js');
 const requests = [];
 const item = { uuid: 'example@test', name: '<b>Example</b>', description: '<b>Plain description</b> & text',
     creator: 'Author & Co', pk: 123, link: '/extension/123/example/', shell_version_map: { '49': {} } };
@@ -72,13 +73,32 @@ const observedCatalog = {
     },
 };
 const details = [];
+const detailViews = [];
+const installCalls = []; const installErrors = []; let finishInstall; let installMode = 'pending'; let installAllowed = true;
 let view;
 const window = new Adw.PreferencesWindow({ default_width: 960, default_height: 640, search_enabled: false });
 try {
     view = createBrowseView({ shellVersion: '49.4', installedUuids: new Set([item.uuid]), catalog: observedCatalog,
-        onDetails: widget => details.push(widget) });
+        canInstall: () => installAllowed, onError: error => installErrors.push(error),
+        onInstall: async uuid => {
+            installCalls.push(uuid);
+            if (installMode === 'failed') throw new Error('Installation rejected');
+            if (installMode === 'successful') return { uuid };
+            return new Promise(resolve => { finishInstall = resolve; });
+        },
+        onDetails: selected => {
+            const detail = createExtensionDetails({ item: selected, catalog: observedCatalog, installed: selected.uuid === item.uuid });
+            detailViews.push(detail); details.push(detail.widget);
+        } });
     assert(view.widget instanceof Gtk.Widget, 'Browse sidebar must be a GTK widget');
-    assert(Object.keys(view).sort().join(',') === 'start,stop,widget', 'Parent-facing API must stay small');
+    assert(view.widget instanceof Gtk.ScrolledWindow && descendants(view.widget).some(child => child instanceof Adw.Clamp && child.maximum_size === 720),
+        'Browse scrolls at main view level and retains the Details content width');
+    const scrollAncestors = [];
+    for (let parent = named(view.widget, 'browse-results').get_parent(); parent; parent = parent.get_parent())
+        if (parent instanceof Gtk.ScrolledWindow) scrollAncestors.push(parent);
+    assert(scrollAncestors.length === 1 && scrollAncestors[0] === view.widget, 'Browse results use only the main view scrollbar');
+    assert(named(view.widget, 'browse-sort-icon')?.icon_name === 'view-sort-descending-symbolic', 'Sort uses the reference icon instead of a text prefix');
+    assert(Object.keys(view).sort().join(',') === 'start,stop,updateInstalled,widget', 'Parent-facing API must stay small');
     const nativeContent = window.get_content();
     window.set_content(null);
     const layout = new Adw.OverlaySplitView({ sidebar: view.widget, content: nativeContent });
@@ -97,38 +117,56 @@ try {
     assert(!window.search_enabled, 'Browse must not enable a search header button');
     assert(named(view.widget, 'browse-search') instanceof Gtk.SearchEntry, 'Search belongs inside Browse, not the header');
     const labels = descendants(list.get_row_at_index(0)).filter(child => child instanceof Gtk.Label);
-    for (const text of [item.name, item.description, `By ${item.creator}`, 'Installed'])
+    for (const text of [item.name, item.description, item.creator, 'Installed'])
         assert(labels.some(label => label.label === text && !label.use_markup), `Plain row text missing: ${text}`);
     assert(!descendants(view.widget).some(child => child instanceof Gtk.Switch), 'Browse must not expose enable controls');
     view.start();
     assert(requests.length === 1, 'Start is idempotent while active');
     print('PASS browse: lazy read-only catalog, in-page search, installed marker and persistent preferences root');
-    list.select_row(list.get_row_at_index(0));
+    list.emit('row-activated', list.get_row_at_index(0));
     assert(details.length === 1 && details[0] instanceof Gtk.Widget, 'Selection must deliver a real detail widget to the parent');
     const detailLabels = descendants(details[0]).filter(child => child instanceof Gtk.Label);
     for (const text of [item.name, item.description, `By ${item.creator}`, 'Installed'])
         assert(detailLabels.some(label => label.label === text && !label.use_markup), `Plain details text missing: ${text}`);
-    const actions = descendants(details[0]).filter(child => child instanceof Gtk.Button);
+    const actions = descendants(details[0]).filter(child => child instanceof Gtk.LinkButton);
     assert(actions.length === 1 && actions[0] instanceof Gtk.LinkButton &&
         actions[0].uri === 'https://extensions.gnome.org/extension/123/example/', 'The sole detail action must be the validated GNOME website');
     assert(nativeContent.get_root() === window, 'Selection callback must not mutate native preferences');
     layout.content = details[0];
     assert(details[0].get_root() === window && view.widget.get_root() === window, 'Parent can show details in the same preferences root');
     print('PASS browse: selected item details are plain text with a GNOME-only external website action');
-    const next = named(view.widget, 'browse-next');
-    const previous = named(view.widget, 'browse-previous');
-    const pageLabel = named(view.widget, 'browse-page');
-    assert(next instanceof Gtk.Button && next.sensitive && !previous.sensitive,
-        'Pagination must enable only the available direction');
-    next.emit('clicked');
-    await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.page === '2', 'Next must request page two');
-    assert(pageLabel.label === 'Page 2 of 2' && !next.sensitive && previous.sensitive, 'Page count and controls must match the API');
-    assert(descendants(list).some(child => child instanceof Gtk.Label && child.label === 'Second page'), 'Next page replaces rather than appends results');
-    previous.emit('clicked');
-    await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.page === '1', 'Previous must request page one');
-    print('PASS browse: catalog pagination follows numpages and replaces results');
-    next.emit('clicked');
-    await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.page === '2', 'Prepare page two before searching');
+    const more = named(view.widget, 'browse-more');
+    assert(more instanceof Adw.ButtonRow && more.sensitive && more.get_parent().visible && list.has_css_class('boxed-list'),
+        'Boxed catalog rows have a full-width Load More Results button');
+    assert(!named(view.widget, 'browse-next') && !named(view.widget, 'browse-previous'), 'Page navigation is removed');
+    const firstRow = list.get_row_at_index(0);
+    responder = () => ({ status: 503, data: {} });
+    more.emit('activated');
+    await waitFor(() => requests.at(-1)?.page === '2' && more.sensitive, 'Failed Load More request settles');
+    assert(list.get_row_at_index(0) === firstRow && more.get_parent().visible,
+        'Failed Load More preserves existing results and offers retry');
+    responder = query => ({ status: 200, data: { extensions: [item, { ...item, uuid: 'second@test', name: 'Second page' }], numpages: 2 } });
+    more.emit('activated');
+    await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.page === '2' && more.sensitive && !more.get_parent().visible,
+        'Retry appends page two after a failed Load More request');
+    assert(!more.get_parent().visible && list.get_row_at_index(1)?._catalogItem.uuid === 'second@test' &&
+        list.get_row_at_index(0)?._catalogItem.uuid === item.uuid, 'Load More appends results and hides at the last page');
+    const installButton = list.get_row_at_index(1)._install;
+    const beforeInstallDetails = details.length;
+    installButton.emit('clicked'); installButton.emit('clicked');
+    assert(installCalls.join(',') === 'second@test' && !installButton.sensitive && installButton.label === 'Installing…',
+        'Row installation uses the exact UUID and prevents duplicate requests');
+    assert(details.length === beforeInstallDetails, 'Install button does not open Details');
+    finishInstall(null);
+    await waitFor(() => installButton.sensitive, 'Cancelled row installation restores Install');
+    installMode = 'failed'; installButton.emit('clicked');
+    await waitFor(() => installErrors.length === 1 && installButton.sensitive, 'Failed row installation reports an error and restores Install');
+    installAllowed = false; view.updateInstalled([item.uuid]);
+    assert(!installButton.sensitive, 'Row installation respects Shell policy');
+    installAllowed = true; view.updateInstalled([item.uuid]);
+    installMode = 'successful'; installButton.emit('clicked');
+    await waitFor(() => installButton.label === 'Installed' && !installButton.sensitive, 'Confirmed row installation transitions to Installed');
+    print('PASS browse: Load More retains previous rows and follows the known final page');
     responder = query => ({ status: 200, data: { extensions: [{ ...item, name: `Result ${query.search}` }], numpages: 1 } });
     const beforeSearch = requests.length;
     const search = named(view.widget, 'browse-search');
@@ -141,7 +179,7 @@ try {
     responder = () => ({ status: 200, data: { extensions: [], numpages: 0 } });
     search.text = 'no matches';
     await waitFor(() => state.visible_child_name === 'empty', 'No matching catalog rows must show an empty state');
-    assert(!list.get_row_at_index(0) && !next.sensitive && !previous.sensitive && !pageLabel.label,
+    assert(!list.get_row_at_index(0) && !more.get_parent().visible,
         'Empty state must have no stale rows or misleading pagination');
     assert(descendants(state.visible_child).some(child => child instanceof Gtk.Label && child.label === 'No Extensions Found'), 'Empty state must explain the result');
     print('PASS browse: empty catalog is explicit and clears stale rows and pagination');
@@ -149,13 +187,13 @@ try {
     search.text = 'offline';
     await waitFor(() => state.visible_child_name === 'error', 'Failed request must show an error rather than an empty catalog');
     const retry = named(view.widget, 'browse-retry');
-    assert(retry instanceof Gtk.Button && retry.sensitive && !next.sensitive && !previous.sensitive, 'Error state must offer retry only');
+    assert(retry instanceof Gtk.Button && retry.sensitive && !more.get_parent().visible, 'Error state must offer retry only');
     responder = () => ({ status: 200, data: { extensions: [{ ...item, link: 'https://attacker.test/' }], numpages: 1 } });
     retry.emit('clicked');
     await waitFor(() => state.visible_child_name === 'results', 'Retry must recover without reconstructing the view');
     assert(requests.at(-1).search === 'offline' && requests.at(-1).page === '1', 'Retry must preserve the failed query');
-    list.select_row(list.get_row_at_index(0));
-    assert(!descendants(details.at(-1)).some(child => child instanceof Gtk.Button), 'Unsafe catalog website must not create any action');
+    list.emit('row-activated', list.get_row_at_index(0));
+    assert(!descendants(details.at(-1)).some(child => child instanceof Gtk.LinkButton), 'Unsafe catalog website must not create any link action');
     print('PASS browse: error retry preserves query and invalid websites expose no action');
     responder = () => ({ status: 200, delay: 250, data: { extensions: [item], numpages: 1 } });
     search.text = 'slow stopped';
@@ -230,7 +268,7 @@ try {
     assert(descendants(list).some(child => child instanceof Gtk.Label &&
         child.label === multiline.replace(/\s+/g, ' ').trim()),
     'Sidebar previews must collapse paragraph breaks so the two-line limit bounds the whole summary');
-    list.select_row(list.get_row_at_index(0));
+    list.emit('row-activated', list.get_row_at_index(0));
     assert(descendants(details.at(-1)).some(child => child instanceof Gtk.Label && child.label === multiline),
         'Full details must preserve the original multiline description');
     print('PASS browse: compact multiline sidebar previews preserve full descriptions in details');
@@ -241,38 +279,29 @@ try {
     search.text = 'filtered middle page';
     await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.search === 'filtered middle page',
         'Three-page catalog must load its first page');
-    assert(pageLabel.label === 'Page 1 of 3' && next.sensitive && !previous.sensitive,
-        'First catalog page must expose only forward pagination');
-    next.emit('clicked');
-    await waitFor(() => state.visible_child_name === 'empty' && requests.at(-1)?.page === '2',
+    assert(more.sensitive && more.get_parent().visible, 'First catalog page exposes Load More');
+    more.emit('activated');
+    await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.page === '2' && more.sensitive,
         'Actual catalog filtering must remove malformed and incompatible middle-page items');
-    assert(!list.get_row_at_index(0), 'Filtered middle page must not retain the first page row');
-    assert(next.sensitive && previous.sensitive,
-        'Filtered empty intermediate page must allow next and previous pagination');
-    assert(pageLabel.label === 'Page 2 of 3', 'Filtered empty page must retain its known page count');
-    next.emit('clicked');
+    assert(list.get_row_at_index(0)?._catalogItem.uuid === 'page-1@test', 'Filtered middle page preserves existing results');
+    assert(more.sensitive && more.get_parent().visible, 'Filtered middle page still allows Load More');
+    more.emit('activated');
     await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.page === '3',
         'Next from a filtered empty page must reach the third page');
-    assert(pageLabel.label === 'Page 3 of 3' && !next.sensitive && previous.sensitive,
-        'Last catalog page must expose only backward pagination');
-    assert(list.get_row_at_index(0)?._catalogItem.uuid === 'page-3@test' && !list.get_row_at_index(1),
-        'Third page must contain only its own row');
-    previous.emit('clicked');
-    await waitFor(() => state.visible_child_name === 'empty' && requests.at(-1)?.page === '2',
-        'Previous must return from the third page to the filtered middle page');
-    assert(!list.get_row_at_index(0) && next.sensitive && previous.sensitive && pageLabel.label === 'Page 2 of 3',
-        'Backward arrival at the filtered page must clear stale rows and preserve pagination');
-    previous.emit('clicked');
-    await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.page === '1',
-        'Previous from a filtered empty page must reach the first page');
-    assert(pageLabel.label === 'Page 1 of 3' && next.sensitive && !previous.sensitive &&
-        list.get_row_at_index(0)?._catalogItem.uuid === 'page-1@test' && !list.get_row_at_index(1),
-    'Returning to page one must restore only its row and forward pagination');
-    assert(requests.slice(beforeFilteredPages).map(query => query.page).join(',') === '1,2,3,2,1',
-        'Pagination must traverse both sides of a filtered empty intermediate page');
-    print('PASS browse: filtered empty intermediate page preserves pagination and clears stale rows in both directions');
+    assert(!more.get_parent().visible && list.get_row_at_index(1)?._catalogItem.uuid === 'page-3@test',
+        'Last catalog page appends its row and hides Load More');
+    assert(requests.slice(beforeFilteredPages).map(query => query.page).join(',') === '1,2,3', 'Load More advances through filtered empty pages');
+    const sort = named(view.widget, 'browse-sort');
+    assert(sort instanceof Gtk.DropDown && sort.get_parent().has_css_class('linked'), 'Sorting is labelled in the split search input');
+    sort.selected = 3;
+    await waitFor(() => state.visible_child_name === 'results' && requests.at(-1)?.sort === 'name', 'Name sorting reaches the API');
+    assert(requests.at(-1).page === '1', 'Changing sort starts on the first page');
+    more.emit('activated');
+    await waitFor(() => requests.at(-1)?.page === '2', 'Sort is retained on subsequent pages');
+    assert(requests.at(-1).sort === 'name', 'Pagination preserves the selected sorting');
 } finally {
     view?.stop();
+    for (const detail of detailViews) detail.stop();
     window.destroy();
     server.disconnect();
 }

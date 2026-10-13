@@ -13,9 +13,9 @@ export function normalizeExtension(uuid, info) {
         canChange: value.canChange !== false };
 }
 
-function call(connection, destination, interfaceName, method, parameters, resultType) {
+function call(connection, destination, interfaceName, method, parameters, resultType, timeoutMs = 10000) {
     return new Promise((resolve, reject) => connection.call(destination, '/org/gnome/Shell', interfaceName,
-        method, parameters, resultType, Gio.DBusCallFlags.NO_AUTO_START, 10000, null, (_connection, result) => {
+        method, parameters, resultType, Gio.DBusCallFlags.NO_AUTO_START, timeoutMs, null, (_connection, result) => {
             try { resolve(connection.call_finish(result)); } catch (error) { reject(error); }
         }));
 }
@@ -36,6 +36,7 @@ export async function createBackend({ destination = 'org.gnome.Shell', connectio
     const settings = new Gio.Settings({ schema_id: 'org.gnome.shell' });
     const listeners = new Set();
     const entries = new Map();
+    const installations = new Map();
     let stopped = false;
     let revision = 0;
     let refreshTicket = 0;
@@ -45,6 +46,7 @@ export async function createBackend({ destination = 'org.gnome.Shell', connectio
         get userExtensionsEnabled() { return proxy.UserExtensionsEnabled === true; },
         get writable() { return settings.is_writable('disable-user-extensions'); },
         get shellVersion() { return proxy.ShellVersion; },
+        get canInstall() { return !stopped && settings.get_boolean('allow-extension-installation'); },
         subscribe(callback) { listeners.add(callback); return () => listeners.delete(callback); },
         async refresh() {
             const ticket = ++refreshTicket;
@@ -93,12 +95,34 @@ export async function createBackend({ destination = 'org.gnome.Shell', connectio
             if (!actual || actual.enabled !== enabled)
                 throw new Error('GNOME Shell did not accept the extension setting');
         },
+        async install(uuid) {
+            if (typeof uuid !== 'string' || !uuid.length || uuid.length > 256 || /[\x00-\x1f]/.test(uuid))
+                throw new Error('Invalid extension UUID');
+            if (!backend.canInstall) throw new Error('Extension installation is not allowed');
+            if (entries.has(uuid)) throw new Error('This extension is already installed');
+            if (installations.has(uuid)) return installations.get(uuid);
+            const operation = (async () => {
+                const reply = await call(connection, destination, 'org.gnome.Shell.Extensions', 'InstallRemoteExtension',
+                    new GLib.Variant('(s)', [uuid]), new GLib.VariantType('(s)'), GLib.MAXINT32);
+                if (stopped) throw new Error('The extension backend was closed');
+                const [result] = reply.recursiveUnpack();
+                if (result === 'cancelled') return null;
+                if (result !== 'successful') throw new Error('GNOME Shell did not accept the installation');
+                await backend.refresh();
+                const actual = entries.get(uuid);
+                if (!actual) throw new Error('The extension was not found after installation');
+                return actual;
+            })().finally(() => installations.delete(uuid));
+            installations.set(uuid, operation);
+            return operation;
+        },
         stop() {
             if (stopped) return;
             stopped = true; ++refreshTicket;
             proxy.disconnectSignal(extensionSignal);
             proxy.disconnect(propertiesSignal);
             settings.disconnect(settingsSignal);
+            settings.disconnect(installationSignal);
             listeners.clear();
         },
     };
@@ -111,6 +135,7 @@ export async function createBackend({ destination = 'org.gnome.Shell', connectio
     });
     const propertiesSignal = proxy.connect('g-properties-changed', notify);
     const settingsSignal = settings.connect('writable-changed::disable-user-extensions', notify);
+    const installationSignal = settings.connect('changed::allow-extension-installation', notify);
     await backend.refresh();
     return backend;
 }
