@@ -9,6 +9,7 @@
 
   <gresource prefix="/org/gnome/Settings/icons/scalable/actions">
     <file alias="globe-alt2-symbolic.svg" preprocess="xml-stripblanks">../panels/extensions/icons/globe-alt2-symbolic.svg</file>
+    <file alias="pip-out-symbolic.svg" preprocess="xml-stripblanks">../panels/extensions/icons/pip-out-symbolic.svg</file>
     <file alias="monge-extensions-outline-symbolic.svg" preprocess="xml-stripblanks">../panels/extensions/icons/monge-extensions-outline-symbolic.svg</file>
   </gresource>
 

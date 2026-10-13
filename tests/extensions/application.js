@@ -37,7 +37,7 @@ export async function run(controller) {
         check(window.get_application().get_application_id() === 'org.monge.Settings.Development', 'isolated development application identity');
         check(controller.current?.panel.get_name() === 'monge-extensions-panel', 'registered Extensions section');
         const iconTheme = Gtk.IconTheme.get_for_display(window.get_display());
-        for (const name of ['globe-alt2-symbolic', 'monge-extensions-outline-symbolic']) {
+        for (const name of ['globe-alt2-symbolic', 'monge-extensions-outline-symbolic', 'pip-out-symbolic']) {
             check(iconTheme.has_icon(name), `bundled extension icon is available: ${name}`);
             const icon = iconTheme.lookup_icon(name, null, 16, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.FORCE_SYMBOLIC);
             check(icon.get_file().get_uri().startsWith('resource:///org/gnome/Settings/icons/'), `extension icon is bundled independently of the host theme: ${name}`);
@@ -130,6 +130,21 @@ export async function run(controller) {
         check(controller.current.catalogDetailsView.installed.label === 'Install…' && controller.current.catalogDetailsView.installed.sensitive,
             'uninstalled compatible catalog details expose Install');
         await stable(window); snapshot(window, 'catalog-details');
+        const screenshotDetails = controller.current.catalogDetailsView;
+        const inlinePreview = screenshotDetails.preview;
+        const [hasExpandBounds, expandBounds] = screenshotDetails.expand.compute_bounds(inlinePreview);
+        const previewScale = Math.min(inlinePreview.get_width() / inlinePreview.paintable.get_width(),
+            inlinePreview.get_height() / inlinePreview.paintable.get_height());
+        check(hasExpandBounds && expandBounds.get_x() + expandBounds.get_width() <=
+            (inlinePreview.get_width() + inlinePreview.paintable.get_width() * previewScale) / 2,
+            'expand control stays inside the painted screenshot rather than its letterbox');
+        screenshotDetails.expand.emit('clicked'); await delay(100);
+        check(screenshotDetails.imageDialog instanceof Adw.Dialog && window.get_visible_dialog() === screenshotDetails.imageDialog,
+            'screenshot expansion presents an enlarged native dialog on the Settings root');
+        snapshot(window, 'screenshot-expanded');
+        screenshotDetails.imageDialog.close(); await delay(100);
+        check(!screenshotDetails.imageDialog && screenshotDetails.preview.get_root() === window,
+            'closing screenshot enlargement retains the inline preview and Settings root');
         controller.current.catalogDetailsView.installed.emit('clicked');
         for (let attempt = 0; attempt < 100 && controller.current.catalogDetailsView.installed.label !== 'Installed'; attempt++) await delay(10);
         check(controller.backend.extensions.some(item => item.uuid === 'catalog@monge.test') &&

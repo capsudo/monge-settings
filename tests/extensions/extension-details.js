@@ -100,6 +100,8 @@ try {
     assert(image.start() === first, 'Concurrent callers share the same details load');
     await first;
     assert(image.preview.visible && image.preview.paintable.get_width() === 32, 'A real PNG is decoded into the preview');
+    assert(image.expand instanceof Gtk.Button && image.expand.visible && image.expand.has_css_class('circular') &&
+        image.expand.icon_name === 'pip-out-symbolic', 'Loaded screenshot has the circular reference expand control');
 } finally { image.stop(); }
 const gif = createExtensionDetails({ item, catalog: {
     details: async () => ({ creator: 'Author', screenshot: '/extension-data/screenshots/example.gif' }),

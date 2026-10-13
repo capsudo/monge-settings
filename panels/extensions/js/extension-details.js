@@ -36,7 +36,24 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
     installedBadge.append(installed); installedBadge.append(installedVersionButton);
     hero.append(icon); hero.append(identity); hero.append(installedBadge); body.append(hero);
     const preview = new Gtk.Picture({ visible: false, can_shrink: true, content_fit: Gtk.ContentFit.CONTAIN });
-    body.append(preview);
+    const previewOverlay = new Gtk.Overlay({ child: preview, visible: false });
+    const expand = new Gtk.Button({ icon_name: 'pip-out-symbolic', tooltip_text: 'Enlarge Screenshot', visible: false,
+        halign: Gtk.Align.END, valign: Gtk.Align.END, margin_end: 12, margin_bottom: 12 });
+    expand.add_css_class('osd'); expand.add_css_class('circular');
+    previewOverlay.add_overlay(expand); body.append(previewOverlay);
+    previewOverlay.connect('get-child-position', (_overlay, child, allocation) => {
+        if (child !== expand || !preview.paintable) return false;
+        const width = previewOverlay.get_width(); const height = previewOverlay.get_height();
+        const imageWidth = preview.paintable.get_intrinsic_width(); const imageHeight = preview.paintable.get_intrinsic_height();
+        if (imageWidth <= 0 || imageHeight <= 0) return false;
+        const scale = Math.min(width / imageWidth, height / imageHeight);
+        const buttonWidth = expand.measure(Gtk.Orientation.HORIZONTAL, -1)[1];
+        const buttonHeight = expand.measure(Gtk.Orientation.VERTICAL, buttonWidth)[1];
+        allocation.width = buttonWidth; allocation.height = buttonHeight;
+        allocation.x = Math.max(0, Math.round((width + imageWidth * scale) / 2 - buttonWidth));
+        allocation.y = Math.max(0, Math.round((height + imageHeight * scale) / 2 - buttonHeight));
+        return true;
+    });
     const descriptionHeading = new Gtk.Label({ label: 'Description', xalign: 0 });
     descriptionHeading.add_css_class('heading');
     const description = new Gtk.Label({ label: item.description ?? '', use_markup: false, xalign: 0,
@@ -71,6 +88,18 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
     let isInstalled = initiallyInstalled;
     let installing = false;
     let loading = Promise.resolve();
+    let imageDialog = null;
+    expand.connect('clicked', () => {
+        if (stopped || !preview.paintable || !widget.get_root()) return;
+        if (imageDialog) { imageDialog.present(widget); return; }
+        const picture = new Gtk.Picture({ paintable: preview.paintable, can_shrink: true,
+            content_fit: Gtk.ContentFit.CONTAIN, hexpand: true, vexpand: true });
+        const toolbar = new Adw.ToolbarView({ content: picture }); toolbar.add_top_bar(new Adw.HeaderBar());
+        const dialog = new Adw.Dialog({ title: 'Extension Screenshot', content_width: 1000, content_height: 720, child: toolbar });
+        imageDialog = dialog;
+        dialog.connect('closed', () => { if (imageDialog === dialog) imageDialog = null; picture.paintable = null; });
+        dialog.present(widget);
+    });
     const linkRows = [];
     function updateLinks() {
         for (const row of linkRows) links.remove(row);
@@ -152,6 +181,7 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
                     preview.paintable = value;
                     preview.height_request = Math.min(420, value.get_height());
                     preview.visible = true;
+                    previewOverlay.visible = true; expand.visible = true;
                 }]]) {
                 if (!path || !catalog.media || path === '/static/images/plugin.png') continue;
                 try {
@@ -176,6 +206,8 @@ export function createExtensionDetails({ item, catalog, installed: initiallyInst
     }
     retry.connect('clicked', start);
     update(item);
-    return { widget, information, title, author, installed, installedBadge, description, metrics, links, reviews, downloads, version, installedVersion, preview, retry,
-        start, update, stop() { stopped = true; request?.cancel(); request = null; reviews.stop(); } };
+    return { widget, information, title, author, installed, installedBadge, description, metrics, links, reviews, downloads, version, installedVersion, preview, expand, retry,
+        get imageDialog() { return imageDialog; },
+        start, update, stop() { stopped = true; imageDialog?.force_close(); imageDialog = null;
+            request?.cancel(); request = null; reviews.stop(); } };
 }
