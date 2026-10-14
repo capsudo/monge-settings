@@ -23,7 +23,7 @@
           upstream = pkgs.gnome-control-center;
           runtime = [ pkgs.gjs pkgs.gnome-shell pkgs.libsoup_3 pkgs.gtk4 pkgs.libadwaita pkgs.glib ];
           schemaPackages = (upstream.buildInputs or []) ++ runtime;
-          dataPath = lib.makeSearchPath "share" ((upstream.buildInputs or []) ++ runtime)
+          dataPath = lib.makeSearchPath "share" ((upstream.buildInputs or []) ++ runtime ++ [ pkgs.mutter ])
             + ":" + lib.concatMapStringsSep ":" (package:
               pkgs.glib.getSchemaDataDirPath (package.out or package)) schemaPackages;
           typelibPath = lib.concatStringsSep ":" (

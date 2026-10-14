@@ -515,14 +515,39 @@ export async function run(controller) {
         keyboardStack.visible_child_name = 'shortcuts'; await stable(window);
         check(!window.get_visible_dialog() && shortcutsPage.child.get_root() === window, 'Keyboard Shortcuts is an embedded view, not a modal');
         const shortcutsWidgets = descendants(shortcutsPage.child);
-        const shortcutsNavigation = shortcutsWidgets.find(widget => widget instanceof Adw.NavigationView);
         const shortcutsSearch = shortcutsWidgets.find(widget => widget instanceof Gtk.SearchEntry);
-        const sectionsList = shortcutsWidgets.find(widget => widget instanceof Gtk.ListBox && widget.get_row_at_index(0)?.title === 'Accessibility');
-        check(Boolean(shortcutsSearch && sectionsList), 'Embedded shortcuts view exposes search and categories');
+        const shortcutGroups = shortcutsWidgets.filter(widget => GObject.type_name_from_instance(widget) === 'CcKeyboardShortcutGroup');
+        const categoryTitles = ['Accessibility', 'Launchers', 'Navigation', 'Screenshots', 'Sound and Media', 'System', 'Typing', 'Windows', 'Custom Shortcuts'];
+        check(shortcutGroups.map(group => group.title).join('|') === categoryTitles.join('|'), 'All shortcuts are displayed directly under ordered category headings');
+        check(!shortcutsWidgets.some(widget => widget instanceof Adw.NavigationView), 'Shortcut categories no longer use nested navigation');
+        const accessibilityGroup = shortcutGroups[0];
+        const accessibilityList = descendants(accessibilityGroup).find(widget => widget instanceof Gtk.ListBox && widget.get_row_at_index(0));
+        const accessibilityRow = accessibilityList.get_row_at_index(0);
+        check(accessibilityRow.title === 'Decrease text size' && accessibilityRow.get_mapped(), 'Accessibility actions are visible at the top level');
+        check(shortcutGroups.every(group => descendants(group).some(widget => widget instanceof Gtk.ListBox && widget.get_row_at_index(0))),
+            'Every shortcut category exposes its actions or custom add row directly');
         snapshot(window, 'keyboard-shortcuts-view');
+        const shortcutsScroll = shortcutsWidgets.find(widget => widget instanceof Gtk.ScrolledWindow);
+        shortcutsScroll.vadjustment.value = 500; await stable(window);
+        snapshot(window, 'keyboard-shortcuts-groups');
+        shortcutsScroll.vadjustment.value = 0;
+        for (const [title, action, query] of [['Navigation', 'Switch windows', 'switch windows'], ['Windows', 'Maximize window', 'maximize window']]) {
+            const group = shortcutGroups.find(widget => widget.title === title);
+            shortcutsSearch.text = query; await delay(300);
+            check(descendants(group).some(widget => widget instanceof Adw.PreferencesRow && widget.title === action && widget.get_mapped()),
+                `${title} includes real Mutter shortcut actions`);
+            check(group.visible && group.title === title, `${title} shortcut actions remain searchable under their heading`);
+            snapshot(window, `keyboard-shortcuts-${title.toLowerCase()}`);
+        }
         shortcutsSearch.text = 'screenshot'; await delay(300);
         check(descendants(shortcutsPage.child).some(widget => widget instanceof Adw.PreferencesRow && widget.get_mapped() && widget.title.includes('screenshot')),
             'Embedded shortcuts search shows matching actions');
+        check(!accessibilityGroup.visible && shortcutGroups.some(group => group.title === 'Screenshots' && group.visible),
+            'Search retains matching category headings and hides empty groups');
+        shortcutsSearch.text = 'no-shortcut-matches-this-query'; await delay(300);
+        check(descendants(shortcutsPage.child).some(widget => widget instanceof Adw.StatusPage && widget.title === 'No Results Found' && widget.get_mapped()),
+            'Unmatched shortcut searches show the empty-results view');
+        shortcutsSearch.text = 'screenshot'; await delay(300);
         keyboardStack.visible_child_name = 'input-sources'; await stable(window);
         keyboardStack.visible_child_name = 'shortcuts'; await stable(window);
         check(shortcutsSearch.text === 'screenshot' && !window.get_visible_dialog(), 'Switching Keyboard views preserves shortcut search');
@@ -530,20 +555,23 @@ export async function run(controller) {
         check(shortcutsSearch.text === '', 'Escape clears shortcut search');
         shortcutsSearch.emit('stop-search');
         check(keyboardStack.visible_child_name === 'shortcuts' && !window.get_visible_dialog(), 'Escape on empty search does not close the embedded view');
-        const shortcutsMain = shortcutsNavigation.get_visible_page();
-        sectionsList.emit('row-activated', sectionsList.get_row_at_index(0)); await stable(window);
-        check(shortcutsNavigation.get_visible_page().title === 'Accessibility' && !window.get_visible_dialog(), 'Shortcut categories navigate in the embedded view');
-        snapshot(window, 'keyboard-shortcuts-category');
-        shortcutsNavigation.pop(); await stable(window);
-        check(shortcutsNavigation.get_visible_page() === shortcutsMain, 'Back restores shortcut categories');
-        const customRow = descendants(sectionsList).find(widget => widget instanceof Adw.PreferencesRow && widget.title === 'Custom Shortcuts');
-        sectionsList.emit('row-activated', customRow); await stable(window);
-        const addShortcut = descendants(shortcutsPage.child).find(widget => widget instanceof Gtk.Button && widget.label === '_Add Shortcut…');
-        check(addShortcut.get_mapped(), 'Embedded Custom Shortcuts shows the empty-state add action');
-        addShortcut.emit('clicked'); await stable(window);
+        check(shortcutGroups.every(group => group.visible && categoryTitles.includes(group.title)), 'Clearing search restores every group and its heading');
+        accessibilityList.emit('row-activated', accessibilityRow); await stable(window);
+        check(GObject.type_name_from_instance(window.get_visible_dialog()) === 'CcKeyboardShortcutEditor', 'Top-level shortcut actions open their binding editor');
+        window.get_visible_dialog().close(); await delay(100);
+        const customList = descendants(shortcutGroups.at(-1)).find(widget => widget instanceof Gtk.ListBox && widget.get_row_at_index(0));
+        const addShortcut = customList.get_row_at_index(0);
+        check(addShortcut.get_mapped(), 'Custom Shortcuts exposes its add row at the top level even when empty');
+        shortcutsScroll.vadjustment.value = shortcutsScroll.vadjustment.upper - shortcutsScroll.vadjustment.page_size;
+        await stable(window); snapshot(window, 'keyboard-shortcuts-custom');
+        check(shortcutsWidgets.some(widget => widget instanceof Adw.SwitchRow && widget.title === 'Activities _Overview Shortcut' && widget.get_mapped()) &&
+            shortcutsWidgets.some(widget => widget instanceof Adw.ButtonRow && widget.title === '_Reset All…' && widget.get_mapped()),
+            'Overview and Reset All controls remain below the grouped shortcut actions');
+        customList.emit('row-activated', addShortcut); await stable(window);
         check(GObject.type_name_from_instance(window.get_visible_dialog()) === 'CcKeyboardShortcutEditor', 'Custom shortcut editing still opens the binding editor');
         window.get_visible_dialog().close(); await delay(100);
-        shortcutsNavigation.pop(); await stable(window);
+
+        shortcutsScroll.vadjustment.value = 0;
         const keyboardSize = window.get_default_size();
         window.set_default_size(480, keyboardSize[1]); await stable(window);
         const keyboardSwitcherBar = keyboardWidgets.find(widget => widget instanceof Adw.ViewSwitcherBar);

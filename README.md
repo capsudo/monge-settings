@@ -13,6 +13,10 @@ A GNOME Settings with extra features and fixes
 
 	Note: heavily inspired by [mjakeman's Extension Manager](https://github.com/mjakeman/extension-manager)
 
+- **Streamlined UI**
+  Modals use is restricted to a minimum and hierarchy levels are lowered.
+  - Keyboard shortcuts are directly accessible in their dedicated view inside Keyboard section, no need to navigate to "Customize keyboard shortcuts" > Navigation > ... to update a "Switch Applications" shortcut for instance.
+
 ## Fixes
 
 - **Keyboard shortcuts:** display and handle multiple bindings for an action (GNOME Settings only shows one even if multiple values are defined).

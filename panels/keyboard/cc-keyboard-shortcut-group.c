@@ -269,22 +269,10 @@ shortcut_group_set_list_model (CcKeyboardShortcutGroup *self,
 static void
 shortcut_group_update_title (CcKeyboardShortcutGroup *self)
 {
-  const char *title = NULL;
-  guint n_items;
-  gboolean show_title = TRUE;
-
   if (!self->section_title)
     return;
 
-  n_items = g_list_model_get_n_items (G_LIST_MODEL (self->filtered_shortcuts));
-
-  if (!self->search_terms || n_items == 0)
-    show_title = FALSE;
-
-  if (show_title)
-    title = _(self->section_title);
-
-  adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (self), title);
+  adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (self), _(self->section_title));
 }
 
 static void
