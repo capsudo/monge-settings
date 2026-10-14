@@ -1,22 +1,15 @@
 using Gtk 4.0;
 using Adw 1;
 
-template $CcKeyboardShortcutDialog: Adw.Dialog {
-  content-width: 600;
-  content-height: 540;
-  title: _("Keyboard Shortcuts");
-  focus-widget: search_entry;
+template $CcKeyboardShortcutPage: Adw.Bin {
 
   child: Adw.NavigationView navigation_view {
     notify::visible-page => $shortcut_dialog_visible_page_changed_cb(template);
 
     Adw.NavigationPage main_page {
-      title: bind template.title;
+      title: _("Keyboard Shortcuts");
 
       child: Adw.ToolbarView {
-        [top]
-        Adw.HeaderBar {}
-
         [top]
         SearchBar {
           search-mode-enabled: true;
@@ -101,7 +94,10 @@ template $CcKeyboardShortcutDialog: Adw.Dialog {
 
       child: Adw.ToolbarView {
         [top]
-        Adw.HeaderBar {}
+        Adw.HeaderBar {
+          show-start-title-buttons: false;
+          show-end-title-buttons: false;
+        }
 
         content: Stack subview_stack {
           Stack shortcut_list_stack {

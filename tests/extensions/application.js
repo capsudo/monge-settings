@@ -485,6 +485,71 @@ export async function run(controller) {
             check(GObject.type_name_from_instance(window.active_panel) === type && !controller.current && window.active_panel.get_root() === window && window.get_surface() === surface,
                 `existing ${section} section retains native Settings root and surface`);
         }
+        const descendants = widget => {
+            const widgets = [widget];
+            for (let child = widget.get_first_child(); child; child = child.get_next_sibling())
+                widgets.push(...descendants(child));
+            return widgets;
+        };
+        const keyboardWidgets = descendants(window.active_panel);
+        const keyboardStack = keyboardWidgets.find(widget => widget instanceof Adw.ViewStack);
+        const keyboardSwitcher = keyboardWidgets.find(widget => widget instanceof Adw.ViewSwitcher);
+        check(Boolean(keyboardStack && keyboardSwitcher?.stack === keyboardStack), 'Keyboard uses a native view switcher');
+        check(keyboardStack.get_pages().get_n_items() === 2, 'Keyboard has exactly Input Sources and Keyboard Shortcuts views');
+        const inputPage = keyboardStack.get_page(keyboardStack.get_child_by_name('input-sources'));
+        const shortcutsPage = keyboardStack.get_page(keyboardStack.get_child_by_name('shortcuts'));
+        check(inputPage.title === 'Input Sources' && inputPage.icon_name === 'keyboard-retract-symbolic' &&
+            shortcutsPage.title === 'Keyboard Shortcuts' && shortcutsPage.icon_name === 'keyboard-shortcuts-symbolic',
+            'Keyboard views use the requested titles and icons');
+        for (const name of [inputPage.icon_name, shortcutsPage.icon_name]) {
+            const icon = iconTheme.lookup_icon(name, null, 16, 1, Gtk.TextDirection.NONE, Gtk.IconLookupFlags.FORCE_SYMBOLIC);
+            check(iconTheme.has_icon(name) && icon.get_file().get_uri().startsWith('resource:///org/gnome/Settings/icons/'),
+                `Keyboard icon is bundled independently of the host theme: ${name}`);
+        }
+        check(keyboardStack.visible_child_name === 'input-sources', 'Keyboard opens on Input Sources');
+        check(descendants(inputPage.child).some(widget => widget instanceof Adw.PreferencesGroup && widget.title === 'Special Character Entry'),
+            'Special Character Entry stays inside Input Sources');
+        check(!keyboardWidgets.some(widget => widget instanceof Adw.PreferencesRow && widget.title.includes('View and Customize')),
+            'Keyboard no longer has the modal shortcuts launcher');
+        snapshot(window, 'keyboard-input-sources');
+        keyboardStack.visible_child_name = 'shortcuts'; await stable(window);
+        check(!window.get_visible_dialog() && shortcutsPage.child.get_root() === window, 'Keyboard Shortcuts is an embedded view, not a modal');
+        const shortcutsWidgets = descendants(shortcutsPage.child);
+        const shortcutsNavigation = shortcutsWidgets.find(widget => widget instanceof Adw.NavigationView);
+        const shortcutsSearch = shortcutsWidgets.find(widget => widget instanceof Gtk.SearchEntry);
+        const sectionsList = shortcutsWidgets.find(widget => widget instanceof Gtk.ListBox && widget.get_row_at_index(0)?.title === 'Accessibility');
+        check(Boolean(shortcutsSearch && sectionsList), 'Embedded shortcuts view exposes search and categories');
+        snapshot(window, 'keyboard-shortcuts-view');
+        shortcutsSearch.text = 'screenshot'; await delay(300);
+        check(descendants(shortcutsPage.child).some(widget => widget instanceof Adw.PreferencesRow && widget.get_mapped() && widget.title.includes('screenshot')),
+            'Embedded shortcuts search shows matching actions');
+        keyboardStack.visible_child_name = 'input-sources'; await stable(window);
+        keyboardStack.visible_child_name = 'shortcuts'; await stable(window);
+        check(shortcutsSearch.text === 'screenshot' && !window.get_visible_dialog(), 'Switching Keyboard views preserves shortcut search');
+        shortcutsSearch.emit('stop-search'); await delay(300);
+        check(shortcutsSearch.text === '', 'Escape clears shortcut search');
+        shortcutsSearch.emit('stop-search');
+        check(keyboardStack.visible_child_name === 'shortcuts' && !window.get_visible_dialog(), 'Escape on empty search does not close the embedded view');
+        const shortcutsMain = shortcutsNavigation.get_visible_page();
+        sectionsList.emit('row-activated', sectionsList.get_row_at_index(0)); await stable(window);
+        check(shortcutsNavigation.get_visible_page().title === 'Accessibility' && !window.get_visible_dialog(), 'Shortcut categories navigate in the embedded view');
+        snapshot(window, 'keyboard-shortcuts-category');
+        shortcutsNavigation.pop(); await stable(window);
+        check(shortcutsNavigation.get_visible_page() === shortcutsMain, 'Back restores shortcut categories');
+        const customRow = descendants(sectionsList).find(widget => widget instanceof Adw.PreferencesRow && widget.title === 'Custom Shortcuts');
+        sectionsList.emit('row-activated', customRow); await stable(window);
+        const addShortcut = descendants(shortcutsPage.child).find(widget => widget instanceof Gtk.Button && widget.label === '_Add Shortcut…');
+        check(addShortcut.get_mapped(), 'Embedded Custom Shortcuts shows the empty-state add action');
+        addShortcut.emit('clicked'); await stable(window);
+        check(GObject.type_name_from_instance(window.get_visible_dialog()) === 'CcKeyboardShortcutEditor', 'Custom shortcut editing still opens the binding editor');
+        window.get_visible_dialog().close(); await delay(100);
+        shortcutsNavigation.pop(); await stable(window);
+        const keyboardSize = window.get_default_size();
+        window.set_default_size(480, keyboardSize[1]); await stable(window);
+        const keyboardSwitcherBar = keyboardWidgets.find(widget => widget instanceof Adw.ViewSwitcherBar);
+        check(keyboardSwitcherBar.reveal && keyboardSwitcherBar.get_mapped(), 'Narrow Keyboard view exposes the bottom switcher');
+        snapshot(window, 'keyboard-shortcuts-narrow');
+        window.set_default_size(...keyboardSize); await stable(window);
         window.get_application().activate_action('launch-panel', new GLib.Variant('(sav)', ['extensions', []]));
         await stable(window);
         check(Boolean(controller.current) && window.monge_preferences_content.get_root() === window, 'Extensions can be reopened after native panel destruction');

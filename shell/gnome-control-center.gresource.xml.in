@@ -8,6 +8,8 @@
   </gresource>
 
   <gresource prefix="/org/gnome/Settings/icons/scalable/actions">
+    <file alias="keyboard-shortcuts-symbolic.svg" preprocess="xml-stripblanks">../panels/keyboard/icons/keyboard-shortcuts-symbolic.svg</file>
+    <file alias="keyboard-retract-symbolic.svg" preprocess="xml-stripblanks">../panels/keyboard/icons/keyboard-retract-symbolic.svg</file>
     <file alias="globe-alt2-symbolic.svg" preprocess="xml-stripblanks">../panels/extensions/icons/globe-alt2-symbolic.svg</file>
     <file alias="pip-out-symbolic.svg" preprocess="xml-stripblanks">../panels/extensions/icons/pip-out-symbolic.svg</file>
     <file alias="monge-hash-symbolic.svg" preprocess="xml-stripblanks">../panels/extensions/icons/monge-hash-symbolic.svg</file>

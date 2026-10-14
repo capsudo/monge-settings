@@ -28,7 +28,7 @@
 
 #include "cc-keyboard-panel.h"
 #include "cc-keyboard-resources.h"
-#include "cc-keyboard-shortcut-dialog.h"
+#include "cc-keyboard-shortcut-page.h"
 #include "cc-input-list-box.h"
 #include "cc-xkb-modifier-page.h"
 #include "cc-list-row.h"
@@ -47,8 +47,6 @@ struct _CcKeyboardPanel
   AdwPreferencesGroup *input_switch_group;
   CcListRow           *alt_chars_row;
   CcListRow           *compose_row;
-
-  AdwActionRow        *common_shortcuts_row;
 };
 
 CC_PANEL_REGISTER (CcKeyboardPanel, cc_keyboard_panel)
@@ -119,15 +117,6 @@ compose_row_activated (CcKeyboardPanel *self)
 }
 
 static void
-keyboard_shortcuts_activated (CcKeyboardPanel *self)
-{
-  AdwDialog *dialog;
-
-  dialog = ADW_DIALOG (cc_keyboard_shortcut_dialog_new ());
-  adw_dialog_present (dialog, GTK_WIDGET (self));
-}
-
-static void
 cc_keyboard_panel_set_property (GObject      *object,
                                guint         property_id,
                                const GValue *value,
@@ -176,6 +165,7 @@ cc_keyboard_panel_class_init (CcKeyboardPanelClass *klass)
 
   g_type_ensure (CC_TYPE_INPUT_LIST_BOX);
   g_type_ensure (CC_TYPE_LIST_ROW);
+  g_type_ensure (CC_TYPE_KEYBOARD_SHORTCUT_PAGE);
 
   gtk_widget_class_set_template_from_resource (widget_class, "/org/gnome/control-center/keyboard/cc-keyboard-panel.ui");
 
@@ -184,11 +174,9 @@ cc_keyboard_panel_class_init (CcKeyboardPanelClass *klass)
   gtk_widget_class_bind_template_child (widget_class, CcKeyboardPanel, same_source);
   gtk_widget_class_bind_template_child (widget_class, CcKeyboardPanel, alt_chars_row);
   gtk_widget_class_bind_template_child (widget_class, CcKeyboardPanel, compose_row);
-  gtk_widget_class_bind_template_child (widget_class, CcKeyboardPanel, common_shortcuts_row);
 
   gtk_widget_class_bind_template_callback (widget_class, alt_chars_row_activated);
   gtk_widget_class_bind_template_callback (widget_class, compose_row_activated);
-  gtk_widget_class_bind_template_callback (widget_class, keyboard_shortcuts_activated);
 }
 
 static gboolean
