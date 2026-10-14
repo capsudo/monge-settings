@@ -80,14 +80,21 @@ transform_binding_to_accel (GBinding     *binding,
                             gpointer      user_data)
 {
   g_autoptr(CcKeyboardItem) item = NULL;
-  CcKeyCombo combo;
-  gchar *accelerator;
+  g_autoptr(GString) accelerators = g_string_new (NULL);
+  GList *combos;
 
   item = CC_KEYBOARD_ITEM (g_binding_dup_source (binding));
-  combo = cc_keyboard_item_get_primary_combo (item);
-  accelerator = convert_keysym_state_to_string (&combo);
+  combos = cc_keyboard_item_get_key_combos (item);
+  for (GList *l = combos; l != NULL; l = l->next)
+    {
+      g_autofree char *accelerator = convert_keysym_state_to_string (l->data);
 
-  g_value_take_string (to_value, accelerator);
+      if (accelerators->len > 0)
+        g_string_append (accelerators, ", ");
+      g_string_append (accelerators, accelerator);
+    }
+
+  g_value_set_string (to_value, combos ? accelerators->str : _("Disabled"));
 
   return TRUE;
 }
@@ -116,6 +123,9 @@ cc_keyboard_shortcut_row_new (CcKeyboardItem           *item,
                                G_BINDING_SYNC_CREATE,
                                transform_binding_to_accel,
                                NULL, NULL, NULL);
+  g_object_bind_property (self->accelerator_label, "label",
+                          self->accelerator_label, "tooltip-text",
+                          G_BINDING_SYNC_CREATE);
 
   g_signal_connect_object (item, "notify::is-value-default",
                            G_CALLBACK (cc_kbd_shortcut_is_default_changed_cb),

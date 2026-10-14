@@ -4,14 +4,18 @@ A GNOME Settings with extra features and fixes
 
 ## Extra Features
 
-- **Extensions section:**:
+- **Extensions section**
 	- list of installed GNOME extensions
 	- switch to disable the extensions globally
 	- individual extensions switches
 	- extension settings on right arrow click (not in a modal) 
 	- browse tab to find extensions online. Currently read-only: installation, removal and updates are not implemented.
 
-	Note: heavily inspired by [mjakeman's Extension Manager](https://github.com/mjakeman/extension-manager) 
+	Note: heavily inspired by [mjakeman's Extension Manager](https://github.com/mjakeman/extension-manager)
+
+## Fixes
+
+- **Keyboard shortcuts:** display and handle multiple bindings for an action (GNOME Settings only shows one even if multiple values are defined).
 
 ## Install
 
@@ -105,13 +109,13 @@ Note: When using an absolute local path input, refresh that input's lock entry w
 
 ## Target GNOME Shell Version
 
-Monge Settings currently requires the **GNOME Shell 49.4** runtime it was validated against. Porting to another GNOME release requires updating and retesting the retained helper resources and native integration.
+Monge Settings currently requires the **GNOME Shell** runtime it was validated against. Porting to another GNOME release requires updating and retesting the retained helper resources and native integration.
 
 Only selected **GNOME Shell** releases are targeted:
 
 | Monge Settings | Validated against GNOME Shell |
 | --- | --- |
-| [v49.5](../../tree/49.5) | v49.4 |
+| [v49.5](../../tree/v49.5) | v49.4 |
 
 Note: Monge Settings's version matches the **GNOME Settings** version it is based on. **GNOME Settings** and **GNOME Shell** are separate components whose versions don't need to match exactly.
 
@@ -159,6 +163,7 @@ Requires flakes enabled. The development environment provides the GNOME Shell 49
 - Build: `nix develop path:. --command bash scripts/dev-build.sh -j2`
 - Run: `nix develop path:. --command bash scripts/run.sh --no-build extensions`
 - Test: `bash scripts/check.sh` (builds first); use `--no-build` after an existing local build.
+- Keyboard shortcut tests only: `bash scripts/test-keyboard.sh`; use `--no-build` after an existing local build.
 - Build the replacement package without installing it: `nix build path:.#default`
 
 This workflow uses an ignored, writable source snapshot under `build/dev-source/`. Nix-specific path substitutions stay there rather than modifying tracked upstream files. The matching upstream release archive supplies bundled subprojects, including volume control (`gvc`) and the desktop portal helper (`libgxdp`), for both local and packaged nix CLI builds; Git checkouts do not need separate submodule initialization or wrap downloads for this workflow.

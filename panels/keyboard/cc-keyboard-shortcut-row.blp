@@ -8,6 +8,9 @@ template $CcKeyboardShortcutRow: Adw.ActionRow {
 
   Label accelerator_label {
     xalign: 1.0;
+    single-line-mode: true;
+    ellipsize: end;
+    max-width-chars: 36;
 
     styles [
       "dim-label",

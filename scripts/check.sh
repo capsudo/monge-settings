@@ -13,3 +13,4 @@ for test in backend installed-view native-host extension-page extension-details 
     bash scripts/isolated.sh gjs -m "tests/extensions/$test.js"
 done
 bash scripts/test-application.sh "$@"
+bash scripts/test-keyboard.sh --no-build

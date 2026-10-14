@@ -33,3 +33,22 @@ if setxkbmap.found() and Xvfb.found()
     timeout : 60
   )
 endif
+
+if Xvfb.found()
+  editor_deps = common_deps + [keyboard_panel_dep, keyboard_shortcuts_dep, libwidgets_dep]
+  if have_x11_support
+    editor_deps += x11_dep
+  endif
+  editor_test = executable(
+    'test-keyboard-shortcut-editor',
+    'test-keyboard-shortcut-editor.c',
+    include_directories: [top_inc, common_inc],
+    dependencies: editor_deps,
+  )
+  test(
+    'test-keyboard-shortcut-editor',
+    find_program('bash'),
+    args: [meson.project_source_root() / 'scripts/isolated.sh', editor_test],
+    timeout: 60,
+  )
+endif

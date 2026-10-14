@@ -432,16 +432,17 @@ static gboolean
 search_match_shortcut (CcKeyboardItem *item,
                        const char     *search)
 {
-  g_auto(GStrv) shortcut_tokens = NULL, search_tokens = NULL;
-  g_autofree char *normalized_accel = NULL;
-  g_autofree char *accel = NULL;
   GList *key_combos;
   CcKeyCombo *combo;
-  gboolean match = TRUE;
 
   key_combos = cc_keyboard_item_get_key_combos (item);
   for (GList *l = key_combos; l != NULL; l = l->next)
     {
+      g_auto(GStrv) shortcut_tokens = NULL, search_tokens = NULL;
+      g_autofree char *normalized_accel = NULL;
+      g_autofree char *accel = NULL;
+      gboolean match = TRUE;
+
       combo = l->data;
 
       if (is_empty_binding (combo))
@@ -989,6 +990,7 @@ cc_keyboard_item_add_key_combo_inner (CcKeyboardItem *self,
                                       CcKeyCombo *combo)
 {
   g_auto(GStrv) strv = NULL;
+  g_autofree char *accelerator = combo_get_accelerator (combo);
   int i;
 
   if (!self->can_set_multiple)
@@ -997,7 +999,7 @@ cc_keyboard_item_add_key_combo_inner (CcKeyboardItem *self,
        * so we don't bother special-casing when they don't.
        */
       g_assert (self->settings);
-      g_settings_set_string (self->settings, self->key, combo_get_accelerator (combo));
+      g_settings_set_string (self->settings, self->key, accelerator);
     }
   else
     {
@@ -1010,8 +1012,10 @@ cc_keyboard_item_add_key_combo_inner (CcKeyboardItem *self,
           if (combo_equal (l->data, combo))
             return;
           strv[i] = combo_get_accelerator (l->data);
+          if (g_str_equal (strv[i], accelerator))
+            return;
         }
-      strv[i] = combo_get_accelerator (combo);
+      strv[i] = g_strdup (accelerator);
 
       if (self->settings)
         {
@@ -1056,6 +1060,21 @@ cc_keyboard_item_remove_key_combo_inner (CcKeyboardItem *self,
   g_auto(GStrv) strv = NULL;
   gboolean found;
   int i;
+
+  if (!self->settings)
+    {
+      for (GList *l = self->key_combos; l; l = l->next)
+        {
+          if (combo_equal (l->data, combo))
+            {
+              g_free (l->data);
+              self->key_combos = g_list_delete_link (self->key_combos, l);
+              binding_changed_notify (self);
+              return;
+            }
+        }
+      return;
+    }
 
   strv = g_new0 (gchar*, g_list_length (self->key_combos) + 1);
 
